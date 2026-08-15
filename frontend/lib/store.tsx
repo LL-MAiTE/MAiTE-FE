@@ -319,6 +319,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
   const startLiveMeeting = useCallback(
     (meetingId: string) => {
+      // Agora Agent(클라우드에서 직접 우리 서버를 호출)가 "이 회의의 승인된 안건이 뭔지"를
+      // 조회할 수 있도록, 미팅 시작 시점의 승인 스냅샷을 서버(임시 메모리 저장소)에 올려둔다.
+      // 실패해도 로컬 라이브 전환 자체는 막지 않는다 — mock 데모 단계라 보조 수단일 뿐.
+      const currentMeeting = getMeeting(meetingId);
+      if (currentMeeting) {
+        const approvedSnapshot = currentMeeting.positions
+          .filter((p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인")
+          .map((p) => ({ ...p, approvalStatus: "승인" as const }));
+        fetch("/api/meeting-snapshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ meetingId, approvedPositions: approvedSnapshot }),
+        }).catch(() => {
+          // 서버 스냅샷 업로드 실패는 조용히 무시 (mock 데모 특성상 치명적이지 않음)
+        });
+      }
+
       updateMeeting(meetingId, (meeting) => {
         if (meeting.transcript.length > 0) return { ...meeting, status: "라이브" };
         const notice: TranscriptEntry = {
@@ -334,7 +351,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return { ...meeting, status: "라이브", transcript: [notice] };
       });
     },
-    [updateMeeting]
+    [getMeeting, updateMeeting]
   );
 
   const askQuestion = useCallback(
