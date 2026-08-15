@@ -1,11 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { EmptyState, Card } from "@/components/Card";
-import { HoldStatusBadge, MeetingStatusBadge } from "@/components/Badge";
+import { HoldStatusBadge, MeetingStatusBadge, Badge } from "@/components/Badge";
 import { evaluateAlternativeMock } from "@/lib/mockAi";
+import { AgoraConnectionStatus, AgoraVoiceSession, RemoteParticipant } from "@/lib/agoraRtc";
+
+const VOICE_STATUS_TONE: Record<AgoraConnectionStatus, "neutral" | "warning" | "success" | "danger"> = {
+  연결안됨: "neutral",
+  연결중: "warning",
+  연결됨: "success",
+  오류: "danger",
+};
 
 export default function LiveMeetingPage({
   params,
@@ -24,6 +32,20 @@ export default function LiveMeetingPage({
   const [proposals, setProposals] = useState<
     { id: string; topic: string; text: string; withinRange: boolean | null; note: string }[]
   >([]);
+
+  // 기능4 기반: 실제 Agora RTC 채널 연결 (음성). 아직 Real-Time STT(전사)는 안 붙어서
+  // 실제 회의 오디오를 주고받는 것과, 아래 "질문 시뮬레이션"(텍스트 입력)은 서로 별개다.
+  const [voiceStatus, setVoiceStatus] = useState<AgoraConnectionStatus>("연결안됨");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([]);
+  const [muted, setMuted] = useState(false);
+  const voiceSessionRef = useRef<AgoraVoiceSession | null>(null);
+
+  useEffect(() => {
+    return () => {
+      voiceSessionRef.current?.disconnect();
+    };
+  }, []);
 
   // 기능6: 숫자확인 팝업 10초 카운트다운. 1초마다 감소시키고 0이 되면 자동 보류(미응답).
   useEffect(() => {
@@ -66,6 +88,35 @@ export default function LiveMeetingPage({
     }
   };
 
+  const handleConnectVoice = async () => {
+    setVoiceError(null);
+    const session = new AgoraVoiceSession({
+      onStatusChange: (status, error) => {
+        setVoiceStatus(status);
+        if (error) setVoiceError(error);
+      },
+      onRemoteParticipantsChange: setRemoteParticipants,
+    });
+    voiceSessionRef.current = session;
+    try {
+      await session.connect(meeting.id);
+    } catch {
+      // 에러는 onStatusChange 핸들러로 이미 반영됨
+    }
+  };
+
+  const handleDisconnectVoice = async () => {
+    await voiceSessionRef.current?.disconnect();
+    voiceSessionRef.current = null;
+    setMuted(false);
+  };
+
+  const handleToggleMute = () => {
+    const next = !muted;
+    voiceSessionRef.current?.setMuted(next);
+    setMuted(next);
+  };
+
   const handleEvaluateProposal = () => {
     const position = approvedPositions.find((p) => p.topic === proposalTopic);
     if (!position || !proposalText.trim()) return;
@@ -101,6 +152,46 @@ export default function LiveMeetingPage({
           </Link>
         )}
       </div>
+
+      <Card>
+        <div className="row-between">
+          <div>
+            <div className="row">
+              <strong>실시간 음성 채널</strong>
+              <Badge tone={VOICE_STATUS_TONE[voiceStatus]}>{voiceStatus}</Badge>
+              {remoteParticipants.length > 0 && (
+                <span className="muted">참가자 {remoteParticipants.length}명 연결됨</span>
+              )}
+            </div>
+            <p className="muted" style={{ marginTop: 4 }}>
+              Agora RTC 채널(`{meeting.id}`)에 실제로 join합니다. 마이크 권한이 필요합니다.
+              STT(자동 전사)는 아직 안 붙어서, 아래 &ldquo;질문 시뮬레이션&rdquo;은 이 음성
+              채널과는 별개로 동작합니다.
+            </p>
+            {voiceError && <p style={{ color: "var(--tone-danger-fg)" }}>{voiceError}</p>}
+          </div>
+          <div className="row">
+            {voiceStatus === "연결됨" ? (
+              <>
+                <button className="btn btn-sm" onClick={handleToggleMute}>
+                  {muted ? "음소거 해제" : "음소거"}
+                </button>
+                <button className="btn btn-sm btn-danger" onClick={handleDisconnectVoice}>
+                  연결 종료
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={handleConnectVoice}
+                disabled={voiceStatus === "연결중"}
+              >
+                {voiceStatus === "연결중" ? "연결 중…" : "채널 연결"}
+              </button>
+            )}
+          </div>
+        </div>
+      </Card>
 
       <div className="two-col">
         <div>

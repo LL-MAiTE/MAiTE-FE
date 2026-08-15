@@ -101,8 +101,26 @@ curl -X POST http://localhost:3000/api/agora-token \
   -d '{"channelName":"test-meeting-room"}'
 ```
 
-아직 실제 RTC SDK로 채널에 join해서 오디오를 주고받는 클라이언트 코드는 없습니다 —
-토큰 발급까지만 구현되어 있고, 다음 단계는 이 토큰으로 실제 채널에 join하는 부분입니다.
+### Agora RTC 실제 음성 채널 연결 (클라이언트)
+
+`lib/agoraRtc.ts`(`AgoraVoiceSession`)가 위 토큰 라우트로 토큰을 받아 `agora-rtc-sdk-ng`로
+실제 RTC 채널에 join하고 마이크 오디오를 publish/구독한다. `live` 화면 상단 "실시간 음성
+채널" 카드에서 연결/음소거/종료를 조작할 수 있다. 채널명은 `meeting.id`를 그대로 쓴다.
+
+`agora-rtc-sdk-ng`는 브라우저 API(getUserMedia 등)에 의존해서 SSR에서 깨질 수 있으므로,
+`connect()` 안에서 동적 import로만 불러온다 (파일 최상단에서 정적 import하지 않음).
+
+⚠️ **타입체크/빌드까지만 확인했고, 실제 브라우저에서 마이크 권한을 받아 join하는 것까지는
+검증 못 했습니다** (샌드박스 환경이라 마이크가 없음). `npm run dev`로 직접 켜서 "채널 연결"
+버튼을 눌러 실제로 되는지 확인해봐야 합니다.
+
+### 아직 없는 것
+
+Real-Time STT(전사·화자분리)는 아직 안 붙였습니다. Agora Console의 RESTful API 인증에는
+`AGORA_APP_ID`/`APP_CERTIFICATE`와는 별개로 **Customer ID / Customer Secret**이 필요한데
+아직 안 받아뒀습니다 (Agora Console → RESTful API 섹션에서 발급). 그래서 `live` 화면의
+"질문 시뮬레이션"(텍스트 입력)은 여전히 위 음성 채널과는 별개로 동작합니다 — 다음 단계는
+이 둘을 잇는 것(실제 발화 → STT 전사 → matchIntentOrHold)입니다.
 
 ## 이 스캐폴드가 구현/데모하는 비즈니스 규칙
 
@@ -124,7 +142,7 @@ curl -X POST http://localhost:3000/api/agora-token \
   쓰지 않는 기능에 대한 것들입니다. 다만 Next 15+는 `params`가 Promise로 바뀌는 breaking
   change라 라우팅 코드 전반을 다시 손봐야 하므로, 실제 배포 전에는 최신 버전으로 업그레이드를
   검토해주세요.
-- Agora 토큰 발급(`/api/agora-token`)까지는 실제로 동작하지만, 그 토큰으로 실제 RTC
-  채널에 join해서 오디오를 주고받는 클라이언트 코드·Real-Time STT(화자분리·전사) 연동은
-  아직 없습니다. `live` 화면은 여전히 텍스트 입력으로 질문을 시뮬레이션합니다.
+- Agora 토큰 발급 + 실제 RTC 채널 join(음성 송수신)까지는 구현했지만 브라우저 마이크로
+  검증은 못 했습니다 (샌드박스 환경 제약). Real-Time STT(자동 전사·화자분리)는 아직
+  없어서, `live` 화면의 "질문 시뮬레이션"(텍스트 입력)은 여전히 음성 채널과 별개입니다.
 - 문서 업로드는 파일 첨부가 아니라 제목+본문 붙여넣기 폼입니다 (Notion/Git 연동은 미구현).
