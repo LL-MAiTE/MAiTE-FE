@@ -20,6 +20,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
   const [counterpartInfo, setCounterpartInfo] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>(coreDocs.map((d) => d.id));
   const [submitting, setSubmitting] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   if (!project) {
     return <EmptyState title="프로젝트를 찾을 수 없습니다" />;
@@ -31,18 +32,25 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
 
   const canSubmit = title.trim() && purpose.trim() && selectedIds.length > 0 && !submitting;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
-    const meeting = createMeeting({
-      projectId: project.id,
-      title: title.trim(),
-      purpose: purpose.trim(),
-      counterpartInfo: counterpartInfo.trim(),
-      selectedDocumentIds: selectedIds,
-    });
-    router.push(`/projects/${project.id}/meetings/${meeting.id}`);
+    setGenerationError(null);
+
+    try {
+      const meeting = await createMeeting({
+        projectId: project.id,
+        title: title.trim(),
+        purpose: purpose.trim(),
+        counterpartInfo: counterpartInfo.trim(),
+        selectedDocumentIds: selectedIds,
+      });
+      router.push(`/projects/${project.id}/meetings/${meeting.id}`);
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : "AI 안건 생성에 실패했습니다.");
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -154,6 +162,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
             취소
           </Link>
         </div>
+        {generationError && <p className="field-hint">{generationError}</p>}
       </form>
     </div>
   );
