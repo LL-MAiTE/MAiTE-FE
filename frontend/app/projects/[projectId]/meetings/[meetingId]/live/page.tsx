@@ -18,6 +18,7 @@ export default function LiveMeetingPage({
   const meeting = getMeeting(params.meetingId);
 
   const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
   const [proposalTopic, setProposalTopic] = useState<string>("");
   const [proposalText, setProposalText] = useState("");
   const [proposals, setProposals] = useState<
@@ -52,11 +53,17 @@ export default function LiveMeetingPage({
     (p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인"
   );
 
-  const handleAsk = (e: React.FormEvent) => {
+  const handleAsk = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!question.trim()) return;
-    askQuestion(meeting.id, question.trim());
+    if (!question.trim() || asking) return;
+    setAsking(true);
+    const text = question.trim();
     setQuestion("");
+    try {
+      await askQuestion(meeting.id, text);
+    } finally {
+      setAsking(false);
+    }
   };
 
   const handleEvaluateProposal = () => {
@@ -186,9 +193,10 @@ export default function LiveMeetingPage({
                 onChange={(e) => setQuestion(e.target.value)}
                 placeholder="상대방 질문 시뮬레이션 (실제로는 실시간 STT 결과가 여기로 들어옵니다)"
                 style={{ flex: 1 }}
+                disabled={asking}
               />
-              <button type="submit" className="btn btn-primary">
-                질문 전송
+              <button type="submit" className="btn btn-primary" disabled={asking}>
+                {asking ? "AI 판단 중…" : "질문 전송"}
               </button>
             </form>
           </section>

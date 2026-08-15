@@ -88,7 +88,7 @@ interface StoreContextValue {
   ) => void;
 
   startLiveMeeting: (meetingId: string) => void;
-  askQuestion: (meetingId: string, questionText: string) => void;
+  askQuestion: (meetingId: string, questionText: string) => Promise<void>;
   tickNumberConfirmation: (meetingId: string, transcriptEntryId: string) => void;
   resolveNumberConfirmation: (
     meetingId: string,
@@ -338,13 +338,40 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const askQuestion = useCallback(
-    (meetingId: string, questionText: string) => {
-      updateMeeting(meetingId, (meeting) => {
-        const approved = meeting.positions.filter(
-          (p) => (p.approvalStatus === "승인" || p.approvalStatus === "수정후승인")
-        );
-        const matchResult = matchMockIntentOrHold(questionText, approved);
+    async (meetingId: string, questionText: string) => {
+      const meetingSnapshot = getMeeting(meetingId);
+      if (!meetingSnapshot) return;
+      const approved = meetingSnapshot.positions.filter(
+        (p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인"
+      );
 
+      // 실제 OpenAI 기반 판단(ai-core/matchIntentOrHold)을 먼저 시도하고,
+      // 키가 없거나 호출이 실패하면 mock 휴리스틱으로 폴백해 데모가 끊기지 않게 한다.
+      let matchResult: ReturnType<typeof matchMockIntentOrHold>;
+      try {
+        const res = await fetch("/api/match-intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: questionText,
+            approvedPositions: approved.map((p) => ({ ...p, approvalStatus: "승인" as const })),
+          }),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error ?? `HTTP ${res.status}`);
+        }
+        matchResult = await res.json();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        matchResult = matchMockIntentOrHold(questionText, approved);
+        matchResult = {
+          ...matchResult,
+          intentMatchReasoning: `[실제 AI 호출 실패 → mock 폴백: ${message}] ${matchResult.intentMatchReasoning}`,
+        };
+      }
+
+      updateMeeting(meetingId, (meeting) => {
         const questionEntry: TranscriptEntry = {
           id: genId("t"),
           speaker: "counterpart",
@@ -394,7 +421,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         });
       });
     },
-    [updateMeeting]
+    [getMeeting, updateMeeting]
   );
 
   const tickNumberConfirmation = useCallback(

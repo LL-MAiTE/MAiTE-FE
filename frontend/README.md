@@ -61,7 +61,7 @@ npm run typecheck
     store.tsx        # React Context 기반 "mock 백엔드" (localStorage 영속)
 ```
 
-## ⚠️ 지금은 전부 mock입니다 — 백엔드 연동 시 교체 지점
+## ⚠️ mock 상태 — 백엔드 연동 시 교체 지점
 
 이번 스캐폴드는 **백엔드 API가 아직 없는 상태에서 화면을 먼저 완성**하기 위해,
 `lib/store.tsx`가 브라우저 안에서 직접 상태를 들고 있는 "가짜 백엔드" 역할을 합니다.
@@ -70,11 +70,22 @@ npm run typecheck
 
 1. **`lib/store.tsx`의 각 액션 함수** — 지금은 `setState`로 직접 상태를 바꾸지만,
    실제로는 여기서 API를 호출하고 응답으로 상태를 갱신하면 됩니다.
-2. **`lib/mockAi.ts`의 두 함수** (`generateMockDraftPositions`, `matchMockIntentOrHold`) —
-   지금은 키워드 overlap 같은 아주 단순한 휴리스틱입니다. 실제 판단 품질이 검증된
-   로직은 `../ai-core/src/generateDraftPositions.ts`, `../ai-core/src/matchIntentOrHold.ts`에
-   있으므로, 백엔드가 이 두 함수를 호출하는 API를 노출하면 프론트는 그 API를 부르는
-   걸로 바꾸면 됩니다. 입출력 타입(`PositionDraft`/`MatchResult` 계열)은 이미 맞춰뒀습니다.
+2. **`lib/mockAi.ts`의 `generateMockDraftPositions`** — 아직 키워드 overlap 흉내 로직입니다
+   (A 담당, `../ai-core/src/generateDraftPositions.ts`로 교체 예정).
+
+### 실시간 의도 매칭은 이미 실제 OpenAI로 연결됨
+
+`matchMockIntentOrHold`는 더 이상 최종 로직이 아닙니다. 실시간 미팅 화면에서 질문을
+보내면(`lib/store.tsx`의 `askQuestion`) 다음 순서로 동작합니다:
+
+1. `POST /api/match-intent` (`app/api/match-intent/route.ts`) 호출 — 서버 라우트가
+   `../ai-core/src/matchIntentOrHold.ts`를 그대로 실행 (프롬프트 원본은 ai-core에만 있음)
+2. 성공하면 실제 OpenAI 판단 결과를 사용
+3. `OPENAI_API_KEY`가 없거나 호출이 실패하면 **`matchMockIntentOrHold`로 자동 폴백**
+   (`intentMatchReasoning`에 `[실제 AI 호출 실패 → mock 폴백: ...]`이 붙어서 구분 가능)
+
+`frontend/.env.local.example`을 `.env.local`로 복사하고 `OPENAI_API_KEY`를 채우면
+실제 판단으로 동작합니다 (`.env.local`은 gitignore되어 있어 커밋되지 않음).
 
 ## 이 스캐폴드가 구현/데모하는 비즈니스 규칙
 
@@ -96,6 +107,8 @@ npm run typecheck
   쓰지 않는 기능에 대한 것들입니다. 다만 Next 15+는 `params`가 Promise로 바뀌는 breaking
   change라 라우팅 코드 전반을 다시 손봐야 하므로, 실제 배포 전에는 최신 버전으로 업그레이드를
   검토해주세요.
-- 실시간 STT/화자분리/Agora 연동은 하지 않고, `live` 화면에서 텍스트 입력으로 질문을
-  시뮬레이션합니다.
+- 실시간 STT/화자분리/Agora 연동은 아직 없고, `live` 화면에서 텍스트 입력으로 질문을
+  시뮬레이션합니다. Agora `APP_ID`/`APP_CERTIFICATE`는 `.env.local`에 이미 설정해둔
+  상태라 다음 작업으로 붙일 준비는 되어 있습니다 (`AGORA_APP_CERTIFICATE`는 토큰 서명용
+  비밀값이므로 서버 라우트에서만 쓸 것 — 클라이언트에 노출 금지).
 - 문서 업로드는 파일 첨부가 아니라 제목+본문 붙여넣기 폼입니다 (Notion/Git 연동은 미구현).
