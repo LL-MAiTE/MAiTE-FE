@@ -87,6 +87,23 @@ npm run typecheck
 `frontend/.env.local.example`을 `.env.local`로 복사하고 `OPENAI_API_KEY`를 채우면
 실제 판단으로 동작합니다 (`.env.local`은 gitignore되어 있어 커밋되지 않음).
 
+### Agora RTC 토큰 서버 라우트
+
+`POST /api/agora-token` (`app/api/agora-token/route.ts`)가 클라이언트의 RTC 채널 join용
+단기 토큰을 발급합니다. `AGORA_APP_CERTIFICATE`는 토큰 서명에만 쓰이고 응답에는 절대
+포함되지 않습니다 — 클라이언트는 `appId`와 `token`만 받아서 Agora RTC SDK로 join하면
+됩니다. `agora-token` 패키지(`RtcTokenBuilder.buildTokenWithUid`) 사용, 토큰/권한 만료
+1시간 고정.
+
+```bash
+curl -X POST http://localhost:3000/api/agora-token \
+  -H "Content-Type: application/json" \
+  -d '{"channelName":"test-meeting-room"}'
+```
+
+아직 실제 RTC SDK로 채널에 join해서 오디오를 주고받는 클라이언트 코드는 없습니다 —
+토큰 발급까지만 구현되어 있고, 다음 단계는 이 토큰으로 실제 채널에 join하는 부분입니다.
+
 ## 이 스캐폴드가 구현/데모하는 비즈니스 규칙
 
 - 회의 생성 시 문서 최소 1개 선택 필수 (핵심 맥락 md만 선택해도 무방)
@@ -107,8 +124,7 @@ npm run typecheck
   쓰지 않는 기능에 대한 것들입니다. 다만 Next 15+는 `params`가 Promise로 바뀌는 breaking
   change라 라우팅 코드 전반을 다시 손봐야 하므로, 실제 배포 전에는 최신 버전으로 업그레이드를
   검토해주세요.
-- 실시간 STT/화자분리/Agora 연동은 아직 없고, `live` 화면에서 텍스트 입력으로 질문을
-  시뮬레이션합니다. Agora `APP_ID`/`APP_CERTIFICATE`는 `.env.local`에 이미 설정해둔
-  상태라 다음 작업으로 붙일 준비는 되어 있습니다 (`AGORA_APP_CERTIFICATE`는 토큰 서명용
-  비밀값이므로 서버 라우트에서만 쓸 것 — 클라이언트에 노출 금지).
+- Agora 토큰 발급(`/api/agora-token`)까지는 실제로 동작하지만, 그 토큰으로 실제 RTC
+  채널에 join해서 오디오를 주고받는 클라이언트 코드·Real-Time STT(화자분리·전사) 연동은
+  아직 없습니다. `live` 화면은 여전히 텍스트 입력으로 질문을 시뮬레이션합니다.
 - 문서 업로드는 파일 첨부가 아니라 제목+본문 붙여넣기 폼입니다 (Notion/Git 연동은 미구현).
