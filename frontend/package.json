@@ -1,0 +1,24 @@
+{
+  "name": "tkzr-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "특기전력 — AI 비동기 협업 대리 진행 서비스 프론트엔드 (전체 화면 스캐폴드, mock 데이터 기반)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.4"
+  }
+}

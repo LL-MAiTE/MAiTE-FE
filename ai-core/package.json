@@ -1,0 +1,20 @@
+{
+  "name": "ai-core",
+  "version": "1.0.0",
+  "private": true,
+  "description": "특기전력 - AI 비동기 협업 대리 진행 서비스 핵심 로직 프로토타입",
+  "main": "test-scenario.ts",
+  "scripts": {
+    "test-scenario": "ts-node test-scenario.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "openai": "^4.68.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
