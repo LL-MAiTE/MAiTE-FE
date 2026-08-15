@@ -114,13 +114,40 @@ curl -X POST http://localhost:3000/api/agora-token \
 검증 못 했습니다** (샌드박스 환경이라 마이크가 없음). `npm run dev`로 직접 켜서 "채널 연결"
 버튼을 눌러 실제로 되는지 확인해봐야 합니다.
 
-### 아직 없는 것
+### Agora Conversational AI Studio Agent — 실제 음성 파이프라인 검증 완료
 
-Real-Time STT(전사·화자분리)는 아직 안 붙였습니다. Agora Console의 RESTful API 인증에는
-`AGORA_APP_ID`/`APP_CERTIFICATE`와는 별개로 **Customer ID / Customer Secret**이 필요한데
-아직 안 받아뒀습니다 (Agora Console → RESTful API 섹션에서 발급). 그래서 `live` 화면의
-"질문 시뮬레이션"(텍스트 입력)은 여전히 위 음성 채널과는 별개로 동작합니다 — 다음 단계는
-이 둘을 잇는 것(실제 발화 → STT 전사 → matchIntentOrHold)입니다.
+독립형 Real-Time STT REST API(Customer ID/Secret 인증)를 쓰려던 처음 계획은 폐기했습니다 —
+Agora 콘솔이 최근 "Agents"(Conversational AI Studio) 중심으로 리뉴얼되면서 그 구버전 REST
+플로우 대신, 콘솔에서 STT(Deepgram)+LLM(OpenAI gpt-4.1-mini)+TTS(Minimax)를 조합한 **Agent**를
+만들고 여기에 우리 백엔드를 **Custom Tool(HTTP 웹훅)**로 연결하는 방식으로 갔습니다.
+
+- `app/api/agora-tool/match-intent/route.ts` — Agora Agent가 직접 호출하는 전용 라우트.
+  `ai-core/matchIntentOrHold`를 그대로 실행하고, 응답은 `{ response: string }` 필드 하나만
+  반환한다 (필드가 여러 개 섞이면 에이전트가 응답을 안 하는 현상이 실제로 관찰됨). 질문 파라미터
+  이름은 `question`/`text`/`query`/`utterance` 다 관대하게 받는다 (Agora 쪽에서 호출마다
+  스키마 필드명이 다르게 관찰됨).
+- `lib/meetingSnapshotStore.ts` + `app/api/meeting-snapshot/route.ts` — 회의별 승인 안건
+  스냅샷을 서버 메모리(⚠️ 임시, 프로세스 재시작 시 소실)에 저장/조회. Agora Agent는 브라우저를
+  거치지 않고 직접 서버를 호출하므로, `meetingId`(쿼리 파라미터 또는 body)로 그 회의의 실제
+  승인 데이터를 조회한다. `lib/store.tsx`의 `startLiveMeeting()`이 라이브 전환 시 자동 업로드.
+  `meetingId`가 없거나 스냅샷을 못 찾으면 데모용 안건 하나로 폴백.
+- **실제 음성으로 end-to-end 검증 완료**: STT(한국어) → Custom Tool 호출 → `matchIntentOrHold`
+  → 응답 → Agent가 그대로 말함. 매칭 질문("마감일 앞당길 수 있나요") → 승인된 답 그대로 발화,
+  비매칭 질문("계약 기간도 늘려야 하나요") → 지어내지 않고 정직하게 보류 문구 발화, 둘 다 확인.
+- 로컬 서버를 `cloudflared tunnel --url`로 임시 공개해서 테스트함 (Custom Tool은 public URL만
+  등록 가능 — localhost/사설망 거부됨). 이 터널은 세션이 끊기면 죽는 **임시 URL**이라, 실제
+  운영에서는 안정적인 배포(Vercel 등)로 교체해야 함.
+
+### 남은 진짜 갭
+
+- **Agent가 아직 완전히 수동 설정**: 콘솔에서 손으로 Agent를 만들고 Custom Tool URL을 등록해둔
+  상태. 우리 앱에서 회의를 시작할 때 이 Agent를 프로그래밍적으로 해당 회의의 RTC 채널에
+  join시키는 자동화(Agora Agent REST API로 start/stop)는 아직 없음 — 지금은 콘솔의 Test 패널
+  "Start Call"로 수동 테스트만 가능.
+- **`lib/agoraRtc.ts`(사람 참여자용 채널 join)와 이 Agent가 같은 채널에서 만나는 통합 안 됨**:
+  지금은 Agent를 콘솔 자체 테스트 채널로만 테스트했고, 우리 `live` 화면에서 사람이 join하는
+  채널(`meeting.id`)에 이 Agent가 같이 들어오는 실제 통합은 다음 단계.
+- 스냅샷 저장소는 서버 프로세스 메모리 기반 임시 구현 — 실제 배포 전 DB로 교체 필요.
 
 ## 이 스캐폴드가 구현/데모하는 비즈니스 규칙
 
@@ -142,7 +169,9 @@ Real-Time STT(전사·화자분리)는 아직 안 붙였습니다. Agora Console
   쓰지 않는 기능에 대한 것들입니다. 다만 Next 15+는 `params`가 Promise로 바뀌는 breaking
   change라 라우팅 코드 전반을 다시 손봐야 하므로, 실제 배포 전에는 최신 버전으로 업그레이드를
   검토해주세요.
-- Agora 토큰 발급 + 실제 RTC 채널 join(음성 송수신)까지는 구현했지만 브라우저 마이크로
-  검증은 못 했습니다 (샌드박스 환경 제약). Real-Time STT(자동 전사·화자분리)는 아직
-  없어서, `live` 화면의 "질문 시뮬레이션"(텍스트 입력)은 여전히 음성 채널과 별개입니다.
+- Agora 토큰 발급 + 실제 RTC 채널 join(음성 송수신) 코드는 있지만 브라우저 마이크로 직접
+  검증은 못 했습니다 (샌드박스 환경 제약). 다만 별도로 만든 Agora Conversational AI Studio
+  Agent + Custom Tool 경로는 실제 음성으로 end-to-end 검증 완료했습니다 (위 섹션 참고) —
+  둘을 하나의 채널로 합치는 게 다음 단계입니다. `live` 화면의 "질문 시뮬레이션"(텍스트 입력)은
+  여전히 이 둘과는 별개로 동작합니다.
 - 문서 업로드는 파일 첨부가 아니라 제목+본문 붙여넣기 폼입니다 (Notion/Git 연동은 미구현).
