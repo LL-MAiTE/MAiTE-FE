@@ -25,10 +25,12 @@ const AGENT_PIPELINE_PROPERTIES = {
   asr: {
     vendor: "deepgram",
     credential_mode: "managed", // Agora Managed Key로 자격증명 자동 해석 — 없으면 연결이 깨짐
+    resource_id: "dfcbdd6c-d453-4e9f-bbc8-1d94a63d70c0", // 어떤 managed credential 쓸지 참조하는
+    // 필드라 params 밖에 둬야 함 — params 안에 있으면 그대로 실제 API 요청에 섞여 들어가서
+    // "Unrecognized request argument" 에러가 난다 (llm에서 실제로 겪었음).
     language: "en",
     params: {
       url: "wss://api.deepgram.com/v1/listen",
-      resource_id: "dfcbdd6c-d453-4e9f-bbc8-1d94a63d70c0",
       model: "nova-3",
       keyterm: "",
       language: "ko",
@@ -38,11 +40,11 @@ const AGENT_PIPELINE_PROPERTIES = {
   llm: {
     vendor: "openai",
     credential_mode: "managed",
+    resource_id: "283a3e9129464ac5ae2f07b98741ff7f",
     style: "openai",
     url: "https://api.openai.com/v1/chat/completions",
     params: {
       model: "gpt-4.1-mini",
-      resource_id: "283a3e9129464ac5ae2f07b98741ff7f",
     },
     system_messages: [
       {
@@ -65,10 +67,10 @@ const AGENT_PIPELINE_PROPERTIES = {
   tts: {
     vendor: "minimax",
     credential_mode: "managed",
+    resource_id: "66449ca1947a4fd0bbc6b400f1e2004d",
     params: {
       url: "wss://api.minimax.io/ws/v1/t2a_v2",
       model: "speech-2.8-turbo",
-      resource_id: "66449ca1947a4fd0bbc6b400f1e2004d",
       voice_setting: { voice_id: "English_radiant_girl" },
     },
   },
