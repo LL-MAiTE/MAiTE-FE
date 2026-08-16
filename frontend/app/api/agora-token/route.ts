@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { RtcRole, RtcTokenBuilder } from "agora-token";
+import { buildRtcToken } from "@/lib/agoraRtcToken";
 
 export const runtime = "nodejs";
 
@@ -16,19 +16,6 @@ export const runtime = "nodejs";
  * 매핑할 때 프론트에서 이 uid를 기준으로 화자를 식별하면 된다.
  */
 export async function POST(req: NextRequest) {
-  const appId = process.env.AGORA_APP_ID;
-  const appCertificate = process.env.AGORA_APP_CERTIFICATE;
-
-  if (!appId || !appCertificate) {
-    return NextResponse.json(
-      {
-        error:
-          "AGORA_APP_ID / AGORA_APP_CERTIFICATE가 서버에 설정되어 있지 않습니다 (frontend/.env.local 확인).",
-      },
-      { status: 503 }
-    );
-  }
-
   let body: { channelName?: string; uid?: number; role?: "publisher" | "subscriber" };
   try {
     body = await req.json();
@@ -41,31 +28,19 @@ export async function POST(req: NextRequest) {
   }
 
   const uid = typeof body.uid === "number" ? body.uid : 0; // 0이면 Agora SDK가 클라이언트에서 자동 배정
-  const role = body.role === "subscriber" ? RtcRole.SUBSCRIBER : RtcRole.PUBLISHER;
-
-  const tokenExpirationInSeconds = 3600; // 토큰 자체 만료 (1시간)
-  const privilegeExpirationInSeconds = 3600; // 채널 join 권한 만료 (1시간)
+  const expirationSeconds = 3600;
 
   try {
-    const token = RtcTokenBuilder.buildTokenWithUid(
-      appId,
-      appCertificate,
-      body.channelName.trim(),
-      uid,
-      role,
-      tokenExpirationInSeconds,
-      privilegeExpirationInSeconds
-    );
-
+    const { appId, token } = buildRtcToken(body.channelName.trim(), uid, body.role, expirationSeconds);
     return NextResponse.json({
       appId, // App ID는 비밀값이 아님 — 클라이언트가 join할 때 필요
       token,
       channelName: body.channelName.trim(),
       uid,
-      expiresInSeconds: tokenExpirationInSeconds,
+      expiresInSeconds: expirationSeconds,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: `토큰 생성 실패: ${message}` }, { status: 500 });
+    return NextResponse.json({ error: message }, { status: 503 });
   }
 }

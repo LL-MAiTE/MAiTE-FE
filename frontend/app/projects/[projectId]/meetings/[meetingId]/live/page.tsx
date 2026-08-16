@@ -41,6 +41,12 @@ export default function LiveMeetingPage({
   const [muted, setMuted] = useState(false);
   const voiceSessionRef = useRef<AgoraVoiceSession | null>(null);
 
+  // Agora Conversational AI Agent(콘솔의 "tkzr")를 이 회의와 같은 채널에 join시키는 상태.
+  // 이게 붙어야 사람 참여자와 AI 진행자가 실제로 같은 채널에서 만난다.
+  const [agentStatus, setAgentStatus] = useState<"없음" | "시작중" | "실행중" | "오류">("없음");
+  const [agentError, setAgentError] = useState<string | null>(null);
+  const [agentId, setAgentId] = useState<string | null>(null);
+
   useEffect(() => {
     return () => {
       voiceSessionRef.current?.disconnect();
@@ -117,6 +123,42 @@ export default function LiveMeetingPage({
     setMuted(next);
   };
 
+  const handleStartAgent = async () => {
+    setAgentError(null);
+    setAgentStatus("시작중");
+    try {
+      const res = await fetch("/api/agora-agent/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId: meeting.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setAgentId(data.agentId);
+      setAgentStatus("실행중");
+    } catch (err) {
+      setAgentError(err instanceof Error ? err.message : String(err));
+      setAgentStatus("오류");
+    }
+  };
+
+  const handleStopAgent = async () => {
+    try {
+      const res = await fetch("/api/agora-agent/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId: meeting.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+    } catch (err) {
+      setAgentError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAgentId(null);
+      setAgentStatus("없음");
+    }
+  };
+
   const handleEvaluateProposal = () => {
     const position = approvedPositions.find((p) => p.topic === proposalTopic);
     if (!position || !proposalText.trim()) return;
@@ -187,6 +229,43 @@ export default function LiveMeetingPage({
                 disabled={voiceStatus === "연결중"}
               >
                 {voiceStatus === "연결중" ? "연결 중…" : "채널 연결"}
+              </button>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="row-between">
+          <div>
+            <div className="row">
+              <strong>AI 진행자 (Agora Agent)</strong>
+              <Badge
+                tone={
+                  agentStatus === "실행중" ? "success" : agentStatus === "오류" ? "danger" : "neutral"
+                }
+              >
+                {agentStatus}
+              </Badge>
+            </div>
+            <p className="muted" style={{ marginTop: 4 }}>
+              콘솔에 설정해둔 AI 진행자를 위 음성 채널(`{meeting.id}`)에 join시킵니다. 사람
+              참여자와 같은 채널에 있어야 실제로 서로의 발화를 듣고 답할 수 있습니다.
+            </p>
+            {agentError && <p style={{ color: "var(--tone-danger-fg)" }}>{agentError}</p>}
+          </div>
+          <div className="row">
+            {agentStatus === "실행중" ? (
+              <button className="btn btn-sm btn-danger" onClick={handleStopAgent}>
+                AI 진행자 퇴장
+              </button>
+            ) : (
+              <button
+                className="btn btn-sm btn-primary"
+                onClick={handleStartAgent}
+                disabled={agentStatus === "시작중"}
+              >
+                {agentStatus === "시작중" ? "참여시키는 중…" : "AI 진행자 참여시키기"}
               </button>
             )}
           </div>
