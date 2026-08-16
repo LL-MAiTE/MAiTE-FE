@@ -69,38 +69,73 @@ export class AgoraVoiceSession {
     this.handlers.onStatusChange("연결중");
     try {
       const { appId, token, uid } = await fetchAgoraToken(channelName);
+      // eslint-disable-next-line no-console
+      console.log(`[Agora] 토큰 발급 완료 — channel=${channelName}, 내 uid=${uid}`);
 
       const AgoraRTC = (await import("agora-rtc-sdk-ng")).default;
       this.client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.client.on("user-published", async (user: any, mediaType: "audio" | "video") => {
+        // eslint-disable-next-line no-console
+        console.log(`[Agora] user-published 이벤트 — 상대 uid=${user.uid}, mediaType=${mediaType}`);
         await this.client.subscribe(user, mediaType);
         if (mediaType === "audio") {
           user.audioTrack?.play();
+          // eslint-disable-next-line no-console
+          console.log(`[Agora] 상대(uid=${user.uid}) 오디오 재생 시작`);
         }
         this.remoteParticipants.set(user.uid, { uid: user.uid, hasAudio: mediaType === "audio" });
         this.emitRemote();
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.client.on("user-unpublished", (user: any) => {
+        // eslint-disable-next-line no-console
+        console.log(`[Agora] user-unpublished 이벤트 — 상대 uid=${user.uid}`);
         this.remoteParticipants.delete(user.uid);
         this.emitRemote();
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      this.client.on("user-joined", (user: any) => {
+        // eslint-disable-next-line no-console
+        console.log(`[Agora] user-joined 이벤트(아직 오디오 publish 전) — 상대 uid=${user.uid}`);
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.client.on("user-left", (user: any) => {
+        // eslint-disable-next-line no-console
+        console.log(`[Agora] user-left 이벤트 — 상대 uid=${user.uid}`);
         this.remoteParticipants.delete(user.uid);
         this.emitRemote();
       });
 
       await this.client.join(appId, channelName, token, uid);
+      // eslint-disable-next-line no-console
+      console.log(`[Agora] 채널 join 완료 — 지금 채널 안에 있는 다른 사람 수: ${this.client.remoteUsers.length}`);
 
       this.localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+      // eslint-disable-next-line no-console
+      console.log("[Agora] 마이크 트랙 생성 완료:", this.localAudioTrack.getTrackLabel?.());
       await this.client.publish([this.localAudioTrack]);
+      // eslint-disable-next-line no-console
+      console.log("[Agora] 마이크 publish 완료 — 이제 상대가 내 목소리를 들을 수 있음");
+
+      // 2초마다 내 마이크가 실제로 소리를 잡고 있는지 콘솔에 볼륨 레벨을 찍는다.
+      // 말할 때 이 값이 0보다 확실히 커지면 마이크 자체는 정상 동작하는 것.
+      const volumeInterval = setInterval(() => {
+        if (!this.localAudioTrack) {
+          clearInterval(volumeInterval);
+          return;
+        }
+        const level = this.localAudioTrack.getVolumeLevel?.() ?? -1;
+        // eslint-disable-next-line no-console
+        console.log(`[Agora] 내 마이크 볼륨 레벨: ${level.toFixed(3)} (0에 가까우면 소리 안 잡히는 중)`);
+      }, 2000);
 
       this.handlers.onStatusChange("연결됨");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // eslint-disable-next-line no-console
+      console.error("[Agora] 연결 실패:", err);
       this.handlers.onStatusChange("오류", message);
       // 연결 중 만든 리소스가 있으면 정리
       await this.disconnect().catch(() => {});
