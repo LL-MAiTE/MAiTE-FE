@@ -1,45 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { matchIntentOrHold } from "../../../../../ai-core/src/matchIntentOrHold";
-import type { ApprovedPosition } from "../../../../../ai-core/src/types";
 import { getMeetingSnapshot } from "@/lib/meetingSnapshotStore";
+import { DEMO_APPROVED_POSITIONS, GENERIC_HOLD_MESSAGE } from "@/lib/agoraDemoData";
 
 export const runtime = "nodejs";
 
 /**
- * Agora Conversational AI Studio의 Custom Tool이 이 URL을 호출한다 (Agora 클라우드에서
- * 직접 호출하므로 public URL이어야 함 — localhost/사설망 URL은 등록 자체가 거부됨).
+ * ⚠️ Agora Conversational AI Studio "Custom Tool"(function-calling) 방식 전용 라우트.
+ * Studio 콘솔의 Test 패널(=pipeline_id 그대로, 우리가 REST로 오버라이드하지 않는 실행)에서만
+ * 안정적으로 동작하는 것으로 확인됨 — REST `/join`으로 직접 시작한 Agent는 이 Custom Tool을
+ * 함수로 인식하지 못하고 이름을 그냥 텍스트로 읽어버리는 문제가 있었다 (REST 문서에 tools/
+ * function-calling 필드가 아예 없음 — Custom Tool은 Studio 전용 기능으로 보임).
  *
- * /api/match-intent와 다른 점: 그쪽은 프론트가 실제 승인된 안건을 body로 넘겨주지만,
- * 여기는 Agora 쪽 LLM 함수 호출이 question만 넘겨준다. 회의별 승인 데이터는
- * lib/meetingSnapshotStore.ts(서버 메모리, 임시)에서 meetingId로 조회한다 —
- * query param(`?meetingId=...`) 또는 body의 meetingId로 받는다.
- *
- * meetingId가 없거나 스냅샷을 못 찾으면, 콘솔에서 직접 테스트할 때도 안 끊기도록
- * 데모용 안건(api_deadline) 하나로 폴백한다.
+ * REST로 직접 시작하는 Agent는 대신 ../chat-completions/route.ts(Custom LLM 방식)를 쓴다.
+ * 이 라우트는 콘솔 Test 패널용으로 계속 남겨둔다.
  */
-// meetingId로 스냅샷을 못 찾았을 때 쓰는 폴백(콘솔에서 meetingId 없이 직접 테스트할 때용).
-const DEMO_APPROVED_POSITIONS: ApprovedPosition[] = [
-  {
-    topic: "api_deadline",
-    questionText: "API 마감일을 앞당길 수 있나요?",
-    answer: null,
-    preference: "8월 25일 유지",
-    concessionRange: "최대 8월 28일까지는 가능 (외부에 먼저 공개하지 않고 협상 카드로 유지)",
-    dealbreaker: "8월 28일을 넘기는 것은 불가 (다음 마일스톤 일정과 직결)",
-    priority: null,
-    scheduleConstraint: null,
-    activeFields: ["preference", "concessionRange", "dealbreaker"],
-    confidenceLevel: "문서근거명확",
-    sourceDocumentTitle: "schedule-agreement.md",
-    reasoning: "일정 관련 질문이라 preference/concessionRange/dealbreaker 위주로 채움.",
-    approvalStatus: "승인",
-  },
-];
-
-// 상대방에게 보류를 알릴 때 쓰는 고정 문구. 내부 holdReason(판단 근거)은 로그용이지,
-// 상대방에게 그대로 노출할 이유가 없어서 분리한다.
-const GENERIC_HOLD_MESSAGE =
-  "죄송하지만 그 부분은 제가 바로 답변드리기 어렵습니다. 회의 후 답변 작성자가 확인하고 별도로 전달드리겠습니다.";
 
 // Agent(LLM)에게 돌려주는 응답은 필드 하나만 준다. 필드가 여러 개 섞여 있으면
 // (matched/matchedTopic/internalReasoning 등) 모델이 "뭘 말해야 할지" 헷갈려서

@@ -8,90 +8,19 @@
  * 인증은 Basic Auth(Customer ID:Customer Secret을 Base64) — AGORA_APP_ID/APP_CERTIFICATE와는
  * 완전히 별개의 자격증명이다. AGORA_CUSTOMER_ID/AGORA_CUSTOMER_SECRET 환경변수 필요.
  *
- * pipeline_id는 콘솔에 저장된 Agent 설정(프롬프트/모델/Custom Tool 연결)을 통째로 참조하는
- * 키라서, 여기서 프롬프트나 모델을 다시 지정할 필요가 없다 — 콘솔에서 Agent를 바꾸면
- * 자동으로 반영된다.
+ * pipeline_id는 콘솔에 저장된 Agent 설정을 참조하는 키지만, `properties.llm`을 여기서
+ * 직접 지정하면 그쪽이 우선한다. 처음엔 Studio의 "Custom Tool"(function-calling)로
+ * match_intent_or_hold를 붙이려 했는데, REST `/join`으로 시작한 Agent는 Custom Tool을
+ * 실제 함수로 인식하지 못하고 이름을 텍스트로 읽어버리는 문제가 있었다 — Agora REST 문서에
+ * tools/function-calling 필드가 아예 없어서, Custom Tool은 Studio 콘솔 전용 기능으로 보인다.
+ *
+ * 그래서 LLM 자체를 우리 서버로 대체하는 "Custom LLM" 방식으로 바꿨다
+ * (app/api/agora-tool/chat-completions/route.ts). Agora가 OpenAI 호환 포맷으로 우리
+ * 엔드포인트를 호출하면, 우리가 매 턴 직접 matchIntentOrHold를 실행해서 결과를 스트리밍해
+ * 돌려준다 — "LLM이 툴을 부를지 스스로 판단"하는 불확실성 자체를 없앤 구조.
  */
 
 const AGENT_API_BASE = "https://api.agora.io/api/conversational-ai-agent/v2";
-
-/**
- * 콘솔의 "tkzr" Agent → Embed Agent에서 그대로 가져온 asr/llm/tts 설정.
- * pipeline_id만 보내면 될 줄 알았는데 InternalError가 나서, Embed 스니펫에 실제로
- * 찍혀있던 것과 동일하게 pipeline_id + 이 inline 설정을 같이 보내는 걸로 바꿨다.
- * ⚠️ 콘솔에서 프롬프트/모델을 바꾸면 여기도 손으로 같이 맞춰줘야 한다 (당장은 동기화 안 됨).
- */
-const AGENT_PIPELINE_PROPERTIES = {
-  asr: {
-    vendor: "deepgram",
-    credential_mode: "managed", // Agora Managed Key로 자격증명 자동 해석 — 없으면 연결이 깨짐
-    resource_id: "dfcbdd6c-d453-4e9f-bbc8-1d94a63d70c0", // 어떤 managed credential 쓸지 참조하는
-    // 필드라 params 밖에 둬야 함 — params 안에 있으면 그대로 실제 API 요청에 섞여 들어가서
-    // "Unrecognized request argument" 에러가 난다 (llm에서 실제로 겪었음).
-    language: "en",
-    params: {
-      url: "wss://api.deepgram.com/v1/listen",
-      model: "nova-3",
-      keyterm: "",
-      language: "ko",
-    },
-    model: "nova-3",
-  },
-  llm: {
-    vendor: "openai",
-    credential_mode: "managed",
-    resource_id: "283a3e9129464ac5ae2f07b98741ff7f",
-    style: "openai",
-    url: "https://api.openai.com/v1/chat/completions",
-    params: {
-      model: "gpt-4.1-mini",
-    },
-    system_messages: [
-      {
-        role: "system",
-        content:
-          "너는 답변 작성자님을 대신해 사전 승인된 범위 안에서 회의를 진행하는 AI 진행자다.\n\n" +
-          "상대방이 질문하면 순서대로 반드시 이렇게 해라:\n" +
-          "1. match_intent_or_hold 툴을 호출해라. 예외 없다.\n" +
-          "2. 툴 응답에 담긴 response 값을 소리 내어 그대로 말해라.\n" +
-          "3. response 내용 외에는 아무것도 덧붙이지 마라. 네 지식이나 추측을 섞지 마라.\n" +
-          "4. 만약 툴 호출이 실패하거나 응답이 오지 않으면, 절대로 네가 답을 지어내지 마라.\n" +
-          '   이 경우엔 "확인하는 데 시간이 조금 걸리고 있습니다. 잠시만 기다려주세요"라고만 말해라.\n\n' +
-          '인사말이나 "확인해볼게요" 같은 짧은 진행 멘트는 자유롭게 해도 된다.',
-      },
-    ],
-    greeting_message:
-      "저는 답변 작성자님을 대신해 사전 승인된 범위 안에서 진행합니다. 범위를 벗어나는 사안은 보류 후 전달됩니다.",
-    failure_message: "Please hold on a second.",
-  },
-  tts: {
-    vendor: "minimax",
-    credential_mode: "managed",
-    resource_id: "66449ca1947a4fd0bbc6b400f1e2004d",
-    params: {
-      url: "wss://api.minimax.io/ws/v1/t2a_v2",
-      model: "speech-2.8-turbo",
-      voice_setting: { voice_id: "English_radiant_girl" },
-    },
-  },
-  mllm: {
-    enable: false,
-    params: {
-      model: "gpt-realtime",
-      voice: "coral",
-      instructions: "You are a helpful chatbot",
-      input_audio_transcription: { model: "gpt-4o-mini-transcribe", language: "en" },
-    },
-    vendor: "openai",
-    turn_detection: {
-      mode: "server_vad",
-      server_vad_config: { threshold: 0.5, prefix_padding_ms: 800, silence_duration_ms: 640 },
-    },
-    greeting_message: "Hello, how are you?",
-    input_modalities: ["audio", "text"],
-    output_modalities: ["text", "audio"],
-  },
-};
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -103,6 +32,50 @@ function basicAuthHeader(): string {
   const id = requireEnv("AGORA_CUSTOMER_ID");
   const secret = requireEnv("AGORA_CUSTOMER_SECRET");
   return "Basic " + Buffer.from(`${id}:${secret}`).toString("base64");
+}
+
+/**
+ * asr/tts는 콘솔 "tkzr" Agent의 Embed Agent 스니펫 기준(Deepgram/Minimax, Agora Managed Key)
+ * 그대로 고정. llm만 channel(=meetingId)별로 우리 Custom LLM 엔드포인트를 가리키게 동적으로 만든다
+ * — 그래야 /api/agora-tool/chat-completions가 어느 회의의 승인 데이터를 찾아야 하는지 안다.
+ * ⚠️ 콘솔에서 ASR/TTS 모델을 바꾸면 여기도 손으로 같이 맞춰줘야 한다 (당장은 동기화 안 됨).
+ */
+function buildPipelineProperties(channel: string) {
+  const publicBaseUrl = requireEnv("AGORA_PUBLIC_BASE_URL").replace(/\/$/, "");
+
+  return {
+    asr: {
+      vendor: "deepgram",
+      credential_mode: "managed", // Agora Managed Key로 자격증명 자동 해석 — 없으면 연결이 깨짐
+      resource_id: "dfcbdd6c-d453-4e9f-bbc8-1d94a63d70c0", // 어떤 managed credential 쓸지 참조 —
+      // params 안에 있으면 그대로 실제 API 요청에 섞여 들어가서 에러 나므로 밖에 둠.
+      language: "en",
+      params: {
+        url: "wss://api.deepgram.com/v1/listen",
+        model: "nova-3",
+        keyterm: "",
+        language: "ko",
+      },
+      model: "nova-3",
+    },
+    llm: {
+      // vendor/credential_mode를 지정하지 않음 — Custom LLM 방식이라 우리 서버 url만 준다.
+      url: `${publicBaseUrl}/api/agora-tool/chat-completions?meetingId=${encodeURIComponent(channel)}`,
+      greeting_message:
+        "저는 답변 작성자님을 대신해 사전 승인된 범위 안에서 진행합니다. 범위를 벗어나는 사안은 보류 후 전달됩니다.",
+      failure_message: "확인하는 데 시간이 조금 걸리고 있습니다. 잠시만 기다려주세요.",
+    },
+    tts: {
+      vendor: "minimax",
+      credential_mode: "managed",
+      resource_id: "66449ca1947a4fd0bbc6b400f1e2004d",
+      params: {
+        url: "wss://api.minimax.io/ws/v1/t2a_v2",
+        model: "speech-2.8-turbo",
+        voice_setting: { voice_id: "English_radiant_girl" },
+      },
+    },
+  };
 }
 
 export interface StartAgentParams {
@@ -138,7 +111,7 @@ export async function startConversationalAgent(params: StartAgentParams): Promis
         token: params.token,
         agent_rtc_uid: params.agentRtcUid,
         remote_rtc_uids: ["*"], // 채널 안 모든 참가자의 발화를 들을 수 있게
-        ...AGENT_PIPELINE_PROPERTIES,
+        ...buildPipelineProperties(params.channel),
       },
     }),
   });
