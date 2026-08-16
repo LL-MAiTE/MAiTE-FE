@@ -24,8 +24,10 @@ const AGENT_API_BASE = "https://api.agora.io/api/conversational-ai-agent/v2";
 const AGENT_PIPELINE_PROPERTIES = {
   asr: {
     vendor: "deepgram",
+    credential_mode: "managed", // Agora Managed Key로 자격증명 자동 해석 — 없으면 연결이 깨짐
     language: "en",
     params: {
+      url: "wss://api.deepgram.com/v1/listen",
       resource_id: "dfcbdd6c-d453-4e9f-bbc8-1d94a63d70c0",
       model: "nova-3",
       keyterm: "",
@@ -35,6 +37,9 @@ const AGENT_PIPELINE_PROPERTIES = {
   },
   llm: {
     vendor: "openai",
+    credential_mode: "managed",
+    style: "openai",
+    url: "https://api.openai.com/v1/chat/completions",
     params: {
       model: "gpt-4.1-mini",
       resource_id: "283a3e9129464ac5ae2f07b98741ff7f",
@@ -59,7 +64,9 @@ const AGENT_PIPELINE_PROPERTIES = {
   },
   tts: {
     vendor: "minimax",
+    credential_mode: "managed",
     params: {
+      url: "wss://api.minimax.io/ws/v1/t2a_v2",
       model: "speech-2.8-turbo",
       resource_id: "66449ca1947a4fd0bbc6b400f1e2004d",
       voice_setting: { voice_id: "English_radiant_girl" },
