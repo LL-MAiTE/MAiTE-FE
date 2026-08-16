@@ -48,6 +48,26 @@ function addHours(iso: string, hours: number): string {
   return new Date(new Date(iso).getTime() + hours * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * 버전관리 규칙: "AI 대리 진행은 항상 최신 체크포인트의 스냅샷(topic별 최신 활성 버전
+ * 모음)만 참조"한다. 정상 흐름에서는 topic이 중복될 일이 없지만(사용자 직접추가/재생성
+ * 로직이 막아줌), 혹시라도 같은 topic으로 승인된 안건이 두 개 이상 남아있는 엣지케이스에
+ * 대비해 여기서 한 번 더 topic별 최신 버전(version 값이 가장 큰 것) 하나만 남긴다.
+ */
+function buildApprovedSnapshot(positions: Position[]): Position[] {
+  const approved = positions.filter(
+    (p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인"
+  );
+  const latestByTopic = new Map<string, Position>();
+  for (const p of approved) {
+    const existing = latestByTopic.get(p.topic);
+    if (!existing || p.version > existing.version) {
+      latestByTopic.set(p.topic, p);
+    }
+  }
+  return Array.from(latestByTopic.values());
+}
+
 // -----------------------------------------------------------------------
 // Context 타입
 // -----------------------------------------------------------------------
@@ -324,9 +344,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       // 실패해도 로컬 라이브 전환 자체는 막지 않는다 — mock 데모 단계라 보조 수단일 뿐.
       const currentMeeting = getMeeting(meetingId);
       if (currentMeeting) {
-        const approvedSnapshot = currentMeeting.positions
-          .filter((p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인")
-          .map((p) => ({ ...p, approvalStatus: "승인" as const }));
+        const approvedSnapshot = buildApprovedSnapshot(currentMeeting.positions).map((p) => ({
+          ...p,
+          approvalStatus: "승인" as const,
+        }));
         fetch("/api/meeting-snapshot", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -358,9 +379,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     async (meetingId: string, questionText: string) => {
       const meetingSnapshot = getMeeting(meetingId);
       if (!meetingSnapshot) return;
-      const approved = meetingSnapshot.positions.filter(
-        (p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인"
-      );
+      const approved = buildApprovedSnapshot(meetingSnapshot.positions);
 
       // 실제 OpenAI 기반 판단(ai-core/matchIntentOrHold)을 먼저 시도하고,
       // 키가 없거나 호출이 실패하면 mock 휴리스틱으로 폴백해 데모가 끊기지 않게 한다.
