@@ -48,6 +48,70 @@ function addHours(iso: string, hours: number): string {
   return new Date(new Date(iso).getTime() + hours * 60 * 60 * 1000).toISOString();
 }
 
+// ai-core의 PositionDraft(순수 판단 결과)를 프론트의 Position(버전관리/승인상태 포함)으로 변환.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapPositionDraftToPosition(draft: any): Position {
+  return {
+    id: genId("pos"),
+    topic: draft.topic,
+    version: 1,
+    origin: "ai",
+    approvalStatus: "초안",
+    questionText: draft.questionText,
+    answer: draft.answer ?? null,
+    preference: draft.preference ?? null,
+    concessionRange: draft.concessionRange ?? null,
+    dealbreaker: draft.dealbreaker ?? null,
+    priority: draft.priority ?? null,
+    scheduleConstraint: draft.scheduleConstraint ?? null,
+    activeFields: draft.activeFields ?? [],
+    confidenceLevel: draft.confidenceLevel ?? "추정",
+    sourceDocumentTitle: draft.sourceDocumentTitle ?? null,
+    reasoning: draft.reasoning ?? "",
+  };
+}
+
+/**
+ * 실제 AI(ai-core/generateDraftPositions)를 먼저 시도하고, 키가 없거나 호출이 실패하면
+ * mock 휴리스틱으로 폴백한다 — lib/store.tsx의 askQuestion(matchIntentOrHold 쪽)과 동일한 정신.
+ */
+async function fetchDraftPositions(
+  docs: ProjectDocument[],
+  meetingTitle: string,
+  meetingPurpose: string,
+  counterpartInfo: string
+): Promise<Position[]> {
+  try {
+    const res = await fetch("/api/generate-draft-positions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        documents: docs.map((d) => ({
+          title: d.title,
+          content: d.content,
+          isCoreContext: d.isCoreContext,
+        })),
+        meetingTitle,
+        meetingPurpose,
+        counterpartInfo,
+      }),
+    });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    // eslint-disable-next-line no-console
+    console.log("[generate-draft-positions] 실제 AI 초안 생성 성공:", data.positions?.length ?? 0, "개");
+    return (data.positions ?? []).map(mapPositionDraftToPosition);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.log(`[generate-draft-positions] 실제 AI 호출 실패 → mock 폴백: ${message}`);
+    return generateMockDraftPositions(docs, meetingTitle, meetingPurpose);
+  }
+}
+
 // -----------------------------------------------------------------------
 // Context 타입
 // -----------------------------------------------------------------------
@@ -69,8 +133,8 @@ interface StoreContextValue {
     purpose: string;
     counterpartInfo: string;
     selectedDocumentIds: string[];
-  }) => Meeting;
-  regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => void;
+  }) => Promise<Meeting>;
+  regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
 
   updatePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => void;
   setPositionApproval: (
@@ -192,18 +256,23 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createMeeting = useCallback(
-    (input: {
+    async (input: {
       projectId: string;
       title: string;
       purpose: string;
       counterpartInfo: string;
       selectedDocumentIds: string[];
-    }): Meeting => {
+    }): Promise<Meeting> => {
       const project = state.projects.find((p) => p.id === input.projectId);
       const docs = (project?.documents ?? []).filter((d) =>
         input.selectedDocumentIds.includes(d.id)
       );
-      const positions = generateMockDraftPositions(docs, input.title, input.purpose);
+      const positions = await fetchDraftPositions(
+        docs,
+        input.title,
+        input.purpose,
+        input.counterpartInfo
+      );
 
       const meeting: Meeting = {
         id: genId("meeting"),
@@ -234,25 +303,31 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const regenerateDraftPositions = useCallback(
-    (meetingId: string, selectedDocumentIds: string[]) => {
-      updateMeeting(meetingId, (meeting) => {
-        const project = state.projects.find((p) => p.id === meeting.projectId);
-        const docs = (project?.documents ?? []).filter((d) => selectedDocumentIds.includes(d.id));
-        const freshDrafts = generateMockDraftPositions(docs, meeting.title, meeting.purpose);
+    async (meetingId: string, selectedDocumentIds: string[]): Promise<void> => {
+      const meeting = getMeeting(meetingId);
+      if (!meeting) return;
+      const project = state.projects.find((p) => p.id === meeting.projectId);
+      const docs = (project?.documents ?? []).filter((d) => selectedDocumentIds.includes(d.id));
+      const freshDrafts = await fetchDraftPositions(
+        docs,
+        meeting.title,
+        meeting.purpose,
+        meeting.counterpartInfo
+      );
+
+      updateMeeting(meetingId, (m) => {
         // 이미 승인/수정/사용자 추가된 안건은 유지하고, AI 초안(미승인) 상태였던 것만 새로 교체한다.
-        const kept = meeting.positions.filter(
-          (p) => p.approvalStatus !== "초안" || p.origin === "user"
-        );
+        const kept = m.positions.filter((p) => p.approvalStatus !== "초안" || p.origin === "user");
         const keptTopics = new Set(kept.map((p) => p.topic));
         const newOnes = freshDrafts.filter((p) => !keptTopics.has(p.topic));
         return {
-          ...meeting,
+          ...m,
           selectedDocumentIds,
           positions: [...kept, ...newOnes],
         };
       });
     },
-    [state.projects, updateMeeting]
+    [state.projects, getMeeting, updateMeeting]
   );
 
   const updatePosition = useCallback(

@@ -31,18 +31,22 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
 
   const canSubmit = title.trim() && purpose.trim() && selectedIds.length > 0 && !submitting;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setSubmitting(true);
-    const meeting = createMeeting({
-      projectId: project.id,
-      title: title.trim(),
-      purpose: purpose.trim(),
-      counterpartInfo: counterpartInfo.trim(),
-      selectedDocumentIds: selectedIds,
-    });
-    router.push(`/projects/${project.id}/meetings/${meeting.id}`);
+    try {
+      const meeting = await createMeeting({
+        projectId: project.id,
+        title: title.trim(),
+        purpose: purpose.trim(),
+        counterpartInfo: counterpartInfo.trim(),
+        selectedDocumentIds: selectedIds,
+      });
+      router.push(`/projects/${project.id}/meetings/${meeting.id}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
