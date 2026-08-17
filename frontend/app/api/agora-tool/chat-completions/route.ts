@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { matchIntentOrHold } from "../../../../../ai-core/src/matchIntentOrHold";
 import { getMeetingSnapshot } from "@/lib/meetingSnapshotStore";
 import { DEMO_APPROVED_POSITIONS, GENERIC_HOLD_MESSAGE } from "@/lib/agoraDemoData";
+import { fetchBackendMeetingPositions } from "@/lib/backendMeetingPositions";
 
 export const runtime = "nodejs";
 
@@ -101,8 +102,13 @@ export async function POST(req: NextRequest) {
     // eslint-disable-next-line no-console
     console.log("[agora-tool/chat-completions] OPENAI_API_KEY 미설정 — 보류 문구로 폴백");
   } else {
-    const snapshot = meetingId ? getMeetingSnapshot(meetingId) : undefined;
+    // 우선순위: 백엔드 실제 DB 스냅샷 > 우리 로컬 파일 스냅샷 > 데모 데이터.
+    // 백엔드 연동이 설정 안 됐거나 호출 실패하면 조용히 다음 단계로 폴백한다 —
+    // 여기서 매칭 자체가 막히면 안 되니까 (막히면 그냥 보류로 처리됨, 안전한 방향).
+    const backendPositions = meetingId ? await fetchBackendMeetingPositions(meetingId) : undefined;
+    const snapshot = backendPositions ?? (meetingId ? getMeetingSnapshot(meetingId) : undefined);
     const approvedPositions = snapshot ?? DEMO_APPROVED_POSITIONS;
+    const source = backendPositions ? "backend" : snapshot ? "local-file" : "demo";
 
     try {
       const result = await matchIntentOrHold({ question, approvedPositions });
@@ -111,7 +117,7 @@ export async function POST(req: NextRequest) {
         : GENERIC_HOLD_MESSAGE;
 
       // eslint-disable-next-line no-console
-      console.log(`[agora-tool/chat-completions] matched=${result.matched} demoFallback=${!snapshot}`, {
+      console.log(`[agora-tool/chat-completions] matched=${result.matched} source=${source}`, {
         matchedTopic: result.matchedTopic,
         holdReason: result.holdReason,
         reasoning: result.intentMatchReasoning,
