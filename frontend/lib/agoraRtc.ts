@@ -65,12 +65,23 @@ export class AgoraVoiceSession {
     this.handlers.onRemoteParticipantsChange(Array.from(this.remoteParticipants.values()));
   }
 
-  async connect(channelName: string): Promise<void> {
+  /**
+   * externalCredentials가 있으면(백엔드가 /meetings/:id/start로 이미 발급해준 토큰)
+   * 그걸 그대로 쓰고, 없으면 우리 자체 /api/agora-token으로 직접 발급받는다.
+   * 백엔드 연동 후엔 항상 전자를 쓴다 — 채널/토큰의 원본이 백엔드 쪽 하나로 통일돼야
+   * 사람 참여자와 백엔드가 join시킨 AI 에이전트가 같은 채널에서 만난다.
+   */
+  async connect(
+    channelName: string,
+    externalCredentials?: { appId: string; token: string; uid?: number }
+  ): Promise<void> {
     this.handlers.onStatusChange("연결중");
     try {
-      const { appId, token, uid } = await fetchAgoraToken(channelName);
+      const { appId, token, uid } = externalCredentials
+        ? { appId: externalCredentials.appId, token: externalCredentials.token, uid: externalCredentials.uid ?? 0 }
+        : await fetchAgoraToken(channelName);
       // eslint-disable-next-line no-console
-      console.log(`[Agora] 토큰 발급 완료 — channel=${channelName}, 내 uid=${uid}`);
+      console.log(`[Agora] 토큰 준비 완료(${externalCredentials ? "외부 공급" : "자체 발급"}) — channel=${channelName}, 내 uid=${uid}`);
 
       const AgoraRTC = (await import("agora-rtc-sdk-ng")).default;
       this.client = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });

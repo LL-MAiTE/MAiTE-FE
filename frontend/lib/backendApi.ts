@@ -1,0 +1,147 @@
+/**
+ * 서버 전용. 백엔드(Spring Boot, LL-MAiTE/MAiTE-BE)의 REST API를 직접 호출하는 얇은 클라이언트.
+ *
+ * 지금 프론트는 로그인 화면이 없다 (해커톤용 스코프 축소 결정 — [[tkzr-scope-decisions]]).
+ * 그래서 모든 호출에 고정 서비스 계정 JWT(BACKEND_API_TOKEN, 만료 7일)를 그대로 쓴다.
+ * 실서비스 전환 시 이 토큰을 실제 로그인 흐름에서 나온 사용자 토큰으로 교체해야 한다.
+ *
+ * 프로젝트/회의 준비(Agenda·Position) CRUD는 여전히 프론트 mock(localStorage)이 원본이다 —
+ * 라이브 미팅을 실제로 시작할 때만, 그 시점의 로컬 데이터를 백엔드에 "동기화"해서
+ * Agora Conversational AI(백엔드가 소유)가 실제 DB 데이터를 보고 응답하게 만든다.
+ */
+
+interface BackendEnvelope<T> {
+  success: boolean;
+  data?: T;
+  message?: string;
+}
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name}가 서버에 설정되어 있지 않습니다 (frontend/.env.local 확인).`);
+  return value;
+}
+
+async function backendFetch<T>(
+  path: string,
+  init?: { method?: string; body?: unknown }
+): Promise<T> {
+  const baseUrl = requireEnv("BACKEND_BASE_URL").replace(/\/$/, "");
+  const token = requireEnv("BACKEND_API_TOKEN");
+
+  const res = await fetch(`${baseUrl}${path}`, {
+    method: init?.method ?? "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: init?.body !== undefined ? JSON.stringify(init.body) : undefined,
+    cache: "no-store",
+  });
+
+  const body: BackendEnvelope<T> = await res.json().catch(() => ({ success: false }));
+  if (!res.ok || !body.success) {
+    throw new Error(body.message ?? `백엔드 호출 실패 (HTTP ${res.status}): ${path}`);
+  }
+  // 일부 엔드포인트(예: /meetings/:id/end)는 data 없이 { success: true }만 내려준다.
+  // data가 필요한 호출부는 각자 결과를 검증해서 쓴다.
+  return (body.data ?? body) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Agenda(=프론트의 "회의 준비") + Position(=안건)
+// ---------------------------------------------------------------------------
+
+export interface BackendProject {
+  id: string;
+  name: string;
+}
+
+export async function createBackendProject(name: string): Promise<BackendProject> {
+  return backendFetch<BackendProject>("/projects", { method: "POST", body: { name } });
+}
+
+export interface BackendAgenda {
+  id: string;
+  projectId: string;
+  title: string;
+  status: string;
+}
+
+export async function createBackendAgenda(input: {
+  projectId: string;
+  title: string;
+  purpose: string;
+  counterpartInfo: string;
+}): Promise<BackendAgenda> {
+  return backendFetch<BackendAgenda>("/agendas", {
+    method: "POST",
+    body: {
+      projectId: input.projectId,
+      title: input.title,
+      purpose: input.purpose,
+      // 프론트는 아직 국가/언어를 분리 입력받지 않아서, 자유 텍스트를 그대로 넣는다 (손실 있는 매핑).
+      counterpartCountry: input.counterpartInfo,
+      counterpartLanguage: "ko-KR",
+      transcriptLanguages: ["ko-KR"],
+    },
+  });
+}
+
+export interface BackendPosition {
+  id: string;
+  topic: string;
+}
+
+export async function addAndApproveBackendPosition(
+  agendaId: string,
+  position: {
+    topic: string;
+    questionText: string;
+    answer: string | null;
+    preference: string | null;
+    concessionRange: string | null;
+    dealbreaker: string | null;
+    priority: number | null;
+    scheduleConstraint: string | null;
+  }
+): Promise<BackendPosition> {
+  const created = await backendFetch<BackendPosition>(`/agendas/${agendaId}/positions`, {
+    method: "POST",
+    body: position,
+  });
+  return backendFetch<BackendPosition>(`/positions/${created.id}/approve`, {
+    method: "POST",
+    body: { approvalStatus: "APPROVED" },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Meeting(=프론트의 "라이브 세션")
+// ---------------------------------------------------------------------------
+
+export interface BackendMeeting {
+  id: string;
+  agendaId: string;
+  status: string;
+}
+
+export async function createBackendMeeting(agendaId: string): Promise<BackendMeeting> {
+  return backendFetch<BackendMeeting>(`/agendas/${agendaId}/meetings`, { method: "POST" });
+}
+
+export interface BackendMeetingStartResult {
+  disclosureCompletedAt: string;
+  agoraAppId: string;
+  agoraChannel: string;
+  agoraToken: string;
+  agoraAgentUid: number;
+}
+
+export async function startBackendMeeting(meetingId: string): Promise<BackendMeetingStartResult> {
+  return backendFetch<BackendMeetingStartResult>(`/meetings/${meetingId}/start`, { method: "POST" });
+}
+
+export async function endBackendMeeting(meetingId: string): Promise<void> {
+  await backendFetch<{ success: boolean }>(`/meetings/${meetingId}/end`, { method: "POST" });
+}

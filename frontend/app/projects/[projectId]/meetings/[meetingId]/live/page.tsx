@@ -33,19 +33,22 @@ export default function LiveMeetingPage({
     { id: string; topic: string; text: string; withinRange: boolean | null; note: string }[]
   >([]);
 
-  // 기능4 기반: 실제 Agora RTC 채널 연결 (음성). 아직 Real-Time STT(전사)는 안 붙어서
-  // 실제 회의 오디오를 주고받는 것과, 아래 "질문 시뮬레이션"(텍스트 입력)은 서로 별개다.
+  // 백엔드(MAiTE-BE)가 소유한 Agora 연동으로 전환했다 — 백엔드가 안건 기반 시스템
+  // 프롬프트를 만들고 자기 소유의 Agora Conversational AI Agent를 채널에 join시킨다.
+  // 그래야 이 미팅의 transcript/meeting_log/hold_item이 실제 DB에 쌓여서 보류함·사후검토
+  // 화면이 진짜 데이터를 받는다 (프론트 자체 Agent 연동은 lib/agoraAgentClient.ts에 남아있지만
+  // 더는 라이브 화면에서 쓰지 않음).
   const [voiceStatus, setVoiceStatus] = useState<AgoraConnectionStatus>("연결안됨");
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([]);
   const [muted, setMuted] = useState(false);
   const voiceSessionRef = useRef<AgoraVoiceSession | null>(null);
 
-  // Agora Conversational AI Agent(콘솔의 "tkzr")를 이 회의와 같은 채널에 join시키는 상태.
-  // 이게 붙어야 사람 참여자와 AI 진행자가 실제로 같은 채널에서 만난다.
-  const [agentStatus, setAgentStatus] = useState<"없음" | "시작중" | "실행중" | "오류">("없음");
-  const [agentError, setAgentError] = useState<string | null>(null);
-  const [agentId, setAgentId] = useState<string | null>(null);
+  const [backendStatus, setBackendStatus] = useState<"없음" | "동기화중" | "시작중" | "실행중" | "오류">(
+    "없음"
+  );
+  const [backendError, setBackendError] = useState<string | null>(null);
+  const [backendMeetingId, setBackendMeetingId] = useState<string | null>(null);
 
   useEffect(() => {
     return () => {
@@ -94,68 +97,93 @@ export default function LiveMeetingPage({
     }
   };
 
-  const handleConnectVoice = async () => {
-    setVoiceError(null);
-    const session = new AgoraVoiceSession({
-      onStatusChange: (status, error) => {
-        setVoiceStatus(status);
-        if (error) setVoiceError(error);
-      },
-      onRemoteParticipantsChange: setRemoteParticipants,
-    });
-    voiceSessionRef.current = session;
-    try {
-      await session.connect(meeting.id);
-    } catch {
-      // 에러는 onStatusChange 핸들러로 이미 반영됨
-    }
-  };
-
-  const handleDisconnectVoice = async () => {
-    await voiceSessionRef.current?.disconnect();
-    voiceSessionRef.current = null;
-    setMuted(false);
-  };
-
   const handleToggleMute = () => {
     const next = !muted;
     voiceSessionRef.current?.setMuted(next);
     setMuted(next);
   };
 
-  const handleStartAgent = async () => {
-    setAgentError(null);
-    setAgentStatus("시작중");
+  const handleStartBackendMeeting = async () => {
+    setBackendError(null);
+    setVoiceError(null);
+    setBackendStatus("동기화중");
     try {
-      const res = await fetch("/api/agora-agent/start", {
+      // 1) 로컬(localStorage) 회의 데이터를 백엔드 실 DB에 반영 (처음 한 번만 실제로 생성됨)
+      const syncRes = await fetch("/api/backend/sync-meeting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId: meeting.id }),
+        body: JSON.stringify({
+          localMeetingId: meeting.id,
+          projectId: project.id,
+          projectName: project.name,
+          title: meeting.title,
+          purpose: meeting.purpose,
+          counterpartInfo: meeting.counterpartInfo,
+          approvedPositions: approvedPositions.map((p) => ({
+            topic: p.topic,
+            questionText: p.questionText,
+            answer: p.answer,
+            preference: p.preference,
+            concessionRange: p.concessionRange,
+            dealbreaker: p.dealbreaker,
+            priority: p.priority,
+            scheduleConstraint: p.scheduleConstraint,
+          })),
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setAgentId(data.agentId);
-      setAgentStatus("실행중");
+      const syncData = await syncRes.json();
+      if (!syncRes.ok) throw new Error(syncData.error ?? `HTTP ${syncRes.status}`);
+      setBackendMeetingId(syncData.backendMeetingId);
+
+      // 2) 백엔드가 시스템 프롬프트 생성 + 자기 소유 Agora Agent를 채널에 join
+      setBackendStatus("시작중");
+      const startRes = await fetch("/api/backend/meeting-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backendMeetingId: syncData.backendMeetingId }),
+      });
+      const startData = await startRes.json();
+      if (!startRes.ok) throw new Error(startData.error ?? `HTTP ${startRes.status}`);
+
+      // 3) 사람 참여자도 백엔드가 발급한 같은 채널/토큰으로 RTC join
+      const session = new AgoraVoiceSession({
+        onStatusChange: (status, error) => {
+          setVoiceStatus(status);
+          if (error) setVoiceError(error);
+        },
+        onRemoteParticipantsChange: setRemoteParticipants,
+      });
+      voiceSessionRef.current = session;
+      await session.connect(startData.agoraChannel, {
+        appId: startData.agoraAppId,
+        token: startData.agoraToken,
+      });
+
+      setBackendStatus("실행중");
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : String(err));
-      setAgentStatus("오류");
+      setBackendError(err instanceof Error ? err.message : String(err));
+      setBackendStatus("오류");
     }
   };
 
-  const handleStopAgent = async () => {
+  const handleStopBackendMeeting = async () => {
+    await voiceSessionRef.current?.disconnect();
+    voiceSessionRef.current = null;
+    setMuted(false);
     try {
-      const res = await fetch("/api/agora-agent/stop", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meetingId: meeting.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (backendMeetingId) {
+        const res = await fetch("/api/backend/meeting-end", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ backendMeetingId }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
     } catch (err) {
-      setAgentError(err instanceof Error ? err.message : String(err));
+      setBackendError(err instanceof Error ? err.message : String(err));
     } finally {
-      setAgentId(null);
-      setAgentStatus("없음");
+      setBackendStatus("없음");
     }
   };
 
@@ -199,73 +227,48 @@ export default function LiveMeetingPage({
         <div className="row-between">
           <div>
             <div className="row">
-              <strong>실시간 음성 채널</strong>
+              <strong>실시간 음성 미팅 (백엔드 연동)</strong>
               <Badge tone={VOICE_STATUS_TONE[voiceStatus]}>{voiceStatus}</Badge>
+              <Badge
+                tone={
+                  backendStatus === "실행중" ? "success" : backendStatus === "오류" ? "danger" : "neutral"
+                }
+              >
+                백엔드 {backendStatus}
+              </Badge>
               {remoteParticipants.length > 0 && (
                 <span className="muted">참가자 {remoteParticipants.length}명 연결됨</span>
               )}
             </div>
             <p className="muted" style={{ marginTop: 4 }}>
-              Agora RTC 채널(`{meeting.id}`)에 실제로 join합니다. 마이크 권한이 필요합니다.
-              STT(자동 전사)는 아직 안 붙어서, 아래 &ldquo;질문 시뮬레이션&rdquo;은 이 음성
-              채널과는 별개로 동작합니다.
+              백엔드가 이 회의의 승인 안건으로 Agora Conversational AI Agent를 채널에 join시키고,
+              그 채널·토큰으로 여기(사람 참여자)도 함께 join합니다. 마이크 권한이 필요합니다.
+              대화 내용은 백엔드 DB(transcript/보류함/사후검토)에 실제로 쌓입니다.
             </p>
             {voiceError && <p style={{ color: "var(--tone-danger-fg)" }}>{voiceError}</p>}
+            {backendError && <p style={{ color: "var(--tone-danger-fg)" }}>{backendError}</p>}
           </div>
           <div className="row">
-            {voiceStatus === "연결됨" ? (
+            {backendStatus === "실행중" ? (
               <>
                 <button className="btn btn-sm" onClick={handleToggleMute}>
                   {muted ? "음소거 해제" : "음소거"}
                 </button>
-                <button className="btn btn-sm btn-danger" onClick={handleDisconnectVoice}>
-                  연결 종료
+                <button className="btn btn-sm btn-danger" onClick={handleStopBackendMeeting}>
+                  미팅 종료
                 </button>
               </>
             ) : (
               <button
                 className="btn btn-sm btn-primary"
-                onClick={handleConnectVoice}
-                disabled={voiceStatus === "연결중"}
+                onClick={handleStartBackendMeeting}
+                disabled={backendStatus === "동기화중" || backendStatus === "시작중"}
               >
-                {voiceStatus === "연결중" ? "연결 중…" : "채널 연결"}
-              </button>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      <Card>
-        <div className="row-between">
-          <div>
-            <div className="row">
-              <strong>AI 진행자 (Agora Agent)</strong>
-              <Badge
-                tone={
-                  agentStatus === "실행중" ? "success" : agentStatus === "오류" ? "danger" : "neutral"
-                }
-              >
-                {agentStatus}
-              </Badge>
-            </div>
-            <p className="muted" style={{ marginTop: 4 }}>
-              콘솔에 설정해둔 AI 진행자를 위 음성 채널(`{meeting.id}`)에 join시킵니다. 사람
-              참여자와 같은 채널에 있어야 실제로 서로의 발화를 듣고 답할 수 있습니다.
-            </p>
-            {agentError && <p style={{ color: "var(--tone-danger-fg)" }}>{agentError}</p>}
-          </div>
-          <div className="row">
-            {agentStatus === "실행중" ? (
-              <button className="btn btn-sm btn-danger" onClick={handleStopAgent}>
-                AI 진행자 퇴장
-              </button>
-            ) : (
-              <button
-                className="btn btn-sm btn-primary"
-                onClick={handleStartAgent}
-                disabled={agentStatus === "시작중"}
-              >
-                {agentStatus === "시작중" ? "참여시키는 중…" : "AI 진행자 참여시키기"}
+                {backendStatus === "동기화중"
+                  ? "회의 동기화 중…"
+                  : backendStatus === "시작중"
+                    ? "AI 진행자 참여시키는 중…"
+                    : "미팅 시작"}
               </button>
             )}
           </div>
