@@ -41,6 +41,8 @@ export default function MeetingDetailPage({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showDocPicker, setShowDocPicker] = useState(false);
+  const [regeneratingDrafts, setRegeneratingDrafts] = useState(false);
+  const [regenerationError, setRegenerationError] = useState<string | null>(null);
 
   const activePositions = useMemo(
     () => meeting?.positions.filter((p) => p.approvalStatus !== "삭제됨") ?? [],
@@ -112,11 +114,22 @@ export default function MeetingDetailPage({
                     <input
                       type="checkbox"
                       checked={checked}
-                      onChange={() => {
+                      disabled={regeneratingDrafts}
+                      onChange={async () => {
                         const next = checked
                           ? meeting.selectedDocumentIds.filter((id) => id !== doc.id)
                           : [...meeting.selectedDocumentIds, doc.id];
-                        regenerateDraftPositions(meeting.id, next);
+                        setRegeneratingDrafts(true);
+                        setRegenerationError(null);
+                        try {
+                          await regenerateDraftPositions(meeting.id, next);
+                        } catch (error) {
+                          setRegenerationError(
+                            error instanceof Error ? error.message : "AI 안건 재생성에 실패했습니다."
+                          );
+                        } finally {
+                          setRegeneratingDrafts(false);
+                        }
                       }}
                     />
                     <span>
@@ -132,6 +145,8 @@ export default function MeetingDetailPage({
               선택을 바꾸면 아직 승인/수정되지 않은 AI 초안 안건만 새로 생성됩니다. 이미 승인했거나
               직접 추가한 안건은 유지됩니다.
             </p>
+            {regeneratingDrafts && <p className="field-hint">AI 안건 초안을 다시 생성하고 있습니다…</p>}
+            {regenerationError && <p className="field-hint">{regenerationError}</p>}
           </Card>
         )}
 

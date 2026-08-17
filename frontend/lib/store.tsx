@@ -19,7 +19,7 @@ import {
   TranscriptReviewDecision,
 } from "./types";
 import { seedMeetings, seedProjects } from "./mockSeed";
-import { generateMockDraftPositions, matchMockIntentOrHold } from "./mockAi";
+import { matchMockIntentOrHold } from "./mockAi";
 
 /**
  * 클라이언트 사이드 "mock 백엔드". 실제 서버 API가 없으므로 React Context + localStorage로
@@ -32,6 +32,28 @@ const STORAGE_KEY = "tkzr_store_v1";
 interface StoreState {
   projects: Project[];
   meetings: Meeting[];
+}
+
+type AiPositionDraft = Omit<Position, "id" | "version" | "origin" | "approvalStatus">;
+
+async function requestDraftPositions(input: {
+  documents: Pick<ProjectDocument, "title" | "content" | "isCoreContext">[];
+  meetingTitle: string;
+  meetingPurpose: string;
+  counterpartInfo: string;
+}): Promise<AiPositionDraft[]> {
+  const response = await fetch("/api/ai/generate-draft-positions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  const body = (await response.json()) as { positions?: AiPositionDraft[]; error?: string };
+  if (!response.ok || !Array.isArray(body.positions)) {
+    throw new Error(body.error ?? "AI 안건 생성에 실패했습니다.");
+  }
+
+  return body.positions;
 }
 
 function seedState(): StoreState {
@@ -89,8 +111,8 @@ interface StoreContextValue {
     purpose: string;
     counterpartInfo: string;
     selectedDocumentIds: string[];
-  }) => Meeting;
-  regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => void;
+  }) => Promise<Meeting>;
+  regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
 
   updatePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => void;
   setPositionApproval: (
@@ -212,18 +234,34 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const createMeeting = useCallback(
-    (input: {
+    async (input: {
       projectId: string;
       title: string;
       purpose: string;
       counterpartInfo: string;
       selectedDocumentIds: string[];
-    }): Meeting => {
+    }): Promise<Meeting> => {
       const project = state.projects.find((p) => p.id === input.projectId);
       const docs = (project?.documents ?? []).filter((d) =>
         input.selectedDocumentIds.includes(d.id)
       );
-      const positions = generateMockDraftPositions(docs, input.title, input.purpose);
+      const drafts = await requestDraftPositions({
+        documents: docs.map(({ title, content, isCoreContext }) => ({
+          title,
+          content,
+          isCoreContext,
+        })),
+        meetingTitle: input.title,
+        meetingPurpose: input.purpose,
+        counterpartInfo: input.counterpartInfo,
+      });
+      const positions: Position[] = drafts.map((draft) => ({
+        ...draft,
+        id: genId("pos"),
+        version: 1,
+        origin: "ai",
+        approvalStatus: "초안",
+      }));
 
       const meeting: Meeting = {
         id: genId("meeting"),
@@ -254,25 +292,45 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const regenerateDraftPositions = useCallback(
-    (meetingId: string, selectedDocumentIds: string[]) => {
-      updateMeeting(meetingId, (meeting) => {
-        const project = state.projects.find((p) => p.id === meeting.projectId);
-        const docs = (project?.documents ?? []).filter((d) => selectedDocumentIds.includes(d.id));
-        const freshDrafts = generateMockDraftPositions(docs, meeting.title, meeting.purpose);
+    async (meetingId: string, selectedDocumentIds: string[]): Promise<void> => {
+      const meeting = state.meetings.find((item) => item.id === meetingId);
+      if (!meeting) throw new Error("회의를 찾을 수 없습니다.");
+
+      const project = state.projects.find((item) => item.id === meeting.projectId);
+      const docs = (project?.documents ?? []).filter((doc) => selectedDocumentIds.includes(doc.id));
+      const drafts = await requestDraftPositions({
+        documents: docs.map(({ title, content, isCoreContext }) => ({
+          title,
+          content,
+          isCoreContext,
+        })),
+        meetingTitle: meeting.title,
+        meetingPurpose: meeting.purpose,
+        counterpartInfo: meeting.counterpartInfo,
+      });
+      const freshDrafts: Position[] = drafts.map((draft) => ({
+        ...draft,
+        id: genId("pos"),
+        version: 1,
+        origin: "ai",
+        approvalStatus: "초안",
+      }));
+
+      updateMeeting(meetingId, (currentMeeting) => {
         // 이미 승인/수정/사용자 추가된 안건은 유지하고, AI 초안(미승인) 상태였던 것만 새로 교체한다.
-        const kept = meeting.positions.filter(
+        const kept = currentMeeting.positions.filter(
           (p) => p.approvalStatus !== "초안" || p.origin === "user"
         );
         const keptTopics = new Set(kept.map((p) => p.topic));
         const newOnes = freshDrafts.filter((p) => !keptTopics.has(p.topic));
         return {
-          ...meeting,
+          ...currentMeeting,
           selectedDocumentIds,
           positions: [...kept, ...newOnes],
         };
       });
     },
-    [state.projects, updateMeeting]
+    [state.meetings, state.projects, updateMeeting]
   );
 
   const updatePosition = useCallback(
