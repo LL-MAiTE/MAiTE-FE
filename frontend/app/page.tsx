@@ -1,10 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Card, EmptyState } from "@/components/Card";
 import { MeetingStatusBadge } from "@/components/Badge";
+
+const PROJECT_ICONS = ["📱", "🌐", "🚀", "💡", "🎨", "📊", "🔧", "🤖", "📡", "🔬", "🎯", "💼"];
+
+const PROJECT_COLORS = [
+  "linear-gradient(135deg, #9c5dfc 0%, #585ff5 100%)",
+  "linear-gradient(135deg, #f472b6 0%, #a855f7 100%)",
+  "linear-gradient(135deg, #60a5fa 0%, #6366f1 100%)",
+  "linear-gradient(135deg, #34d399 0%, #059669 100%)",
+  "linear-gradient(135deg, #fb923c 0%, #f59e0b 100%)",
+  "linear-gradient(135deg, #f87171 0%, #ec4899 100%)",
+];
 
 /**
  * 홈 대시보드. Figma "홈 대시보드"(1:7) 노드를 기반으로 만들었다.
@@ -19,10 +31,61 @@ import { MeetingStatusBadge } from "@/components/Badge";
  *    없어 이번 스코프에서 제외했다.
  */
 export default function HomeDashboardPage() {
+  const router = useRouter();
   const { projects, meetings, getMeetingsByProject, createProject } = useStore();
   const [showForm, setShowForm] = useState(false);
+  const [showMeetingProjectPicker, setShowMeetingProjectPicker] = useState(false);
+  const [selectedMeetingProjectId, setSelectedMeetingProjectId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [selectedIcon, setSelectedIcon] = useState("🚀");
+  const [selectedColor, setSelectedColor] = useState(PROJECT_COLORS[0]);
+  const [inviteEmail, setInviteEmail] = useState("");
+
+  useEffect(() => {
+    if (!showForm) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowForm(false);
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showForm]);
+
+  useEffect(() => {
+    if (!showMeetingProjectPicker) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowMeetingProjectPicker(false);
+        setSelectedMeetingProjectId(null);
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showMeetingProjectPicker]);
+
+  const closeMeetingProjectPicker = () => {
+    setShowMeetingProjectPicker(false);
+    setSelectedMeetingProjectId(null);
+  };
+
+  const continueToNewMeeting = () => {
+    if (!selectedMeetingProjectId) return;
+    router.push(`/projects/${selectedMeetingProjectId}/meetings/new?from=home`);
+  };
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,6 +93,9 @@ export default function HomeDashboardPage() {
     createProject(name.trim(), description.trim());
     setName("");
     setDescription("");
+    setSelectedIcon("🚀");
+    setSelectedColor(PROJECT_COLORS[0]);
+    setInviteEmail("");
     setShowForm(false);
   };
 
@@ -158,8 +224,11 @@ export default function HomeDashboardPage() {
               <span className="widget-card-title">빠른 작업</span>
             </div>
             <div className="quick-action-list">
-              <button className="btn btn-primary" onClick={() => setShowForm((v) => !v)}>
-                <img src="/icons/icon-plus.svg" alt="" width={12} height={12} />새 프로젝트
+              <button className="btn btn-primary" onClick={() => setShowMeetingProjectPicker(true)}>
+                <img src="/icons/icon-plus.svg" alt="" width={12} height={12} />새 회의 시작
+              </button>
+              <button className="btn quick-action-secondary" onClick={() => setShowForm(true)}>
+                새 프로젝트 만들기
               </button>
             </div>
           </Card>
@@ -184,41 +253,6 @@ export default function HomeDashboardPage() {
             + 새 프로젝트
           </button>
         </div>
-
-        {showForm && (
-          <Card>
-            <form onSubmit={handleCreate}>
-              <div className="field">
-                <label htmlFor="project-name">프로젝트 이름</label>
-                <input
-                  id="project-name"
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="예: B2B SaaS 대시보드 개발"
-                  autoFocus
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="project-desc">설명 (선택)</label>
-                <textarea
-                  id="project-desc"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="프로젝트에 대한 짧은 메모"
-                />
-              </div>
-              <div className="row">
-                <button type="submit" className="btn btn-primary">
-                  만들기
-                </button>
-                <button type="button" className="btn btn-ghost" onClick={() => setShowForm(false)}>
-                  취소
-                </button>
-              </div>
-            </form>
-          </Card>
-        )}
 
         {projects.length === 0 ? (
           <EmptyState
@@ -249,6 +283,227 @@ export default function HomeDashboardPage() {
           </div>
         )}
       </section>
+
+      {showMeetingProjectPicker && (
+        <div
+          className="meeting-project-picker-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closeMeetingProjectPicker();
+          }}
+        >
+          <section
+            className="meeting-project-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="meeting-project-picker-title"
+          >
+            <header className="meeting-project-picker-header">
+              <div>
+                <h2 id="meeting-project-picker-title">회의를 시작할 프로젝트 선택</h2>
+                <p>회의를 만들 프로젝트를 하나 선택해주세요.</p>
+              </div>
+              <button
+                type="button"
+                className="project-modal-close"
+                onClick={closeMeetingProjectPicker}
+                aria-label="프로젝트 선택 닫기"
+              >
+                <img src="/icons/project-modal-close.svg" alt="" width={16} height={16} />
+              </button>
+            </header>
+
+            <div className="meeting-project-picker-body">
+              {projects.length === 0 ? (
+                <div className="meeting-project-picker-empty">
+                  <span className="meeting-project-picker-empty-icon">📁</span>
+                  <strong>먼저 프로젝트를 만들어주세요</strong>
+                  <p>회의는 프로젝트 안에서 생성됩니다.</p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => {
+                      closeMeetingProjectPicker();
+                      setShowForm(true);
+                    }}
+                  >
+                    프로젝트 만들기
+                  </button>
+                </div>
+              ) : (
+                <div className="meeting-project-options" role="radiogroup" aria-label="프로젝트 선택">
+                  {projects.map((project) => {
+                    const selected = selectedMeetingProjectId === project.id;
+                    return (
+                      <button
+                        key={project.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        className={`meeting-project-option ${selected ? "selected" : ""}`}
+                        onClick={() => setSelectedMeetingProjectId(project.id)}
+                      >
+                        <span className="meeting-project-option-icon">📁</span>
+                        <span className="meeting-project-option-copy">
+                          <strong>{project.name}</strong>
+                          <span>{project.description || `문서 ${project.documents.length}개`}</span>
+                        </span>
+                        <span className="meeting-project-option-check">{selected ? "✓" : ""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {projects.length > 0 && (
+              <footer className="meeting-project-picker-actions">
+                <button type="button" className="btn" onClick={closeMeetingProjectPicker}>
+                  취소
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!selectedMeetingProjectId}
+                  onClick={continueToNewMeeting}
+                >
+                  다음
+                </button>
+              </footer>
+            )}
+          </section>
+        </div>
+      )}
+
+      {showForm && (
+        <div
+          className="project-modal-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setShowForm(false);
+          }}
+        >
+          <section
+            className="project-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="new-project-title"
+          >
+            <header className="project-modal-header">
+              <h2 id="new-project-title">새 프로젝트 만들기</h2>
+              <button
+                type="button"
+                className="project-modal-close"
+                onClick={() => setShowForm(false)}
+                aria-label="새 프로젝트 만들기 닫기"
+              >
+                <img src="/icons/project-modal-close.svg" alt="" width={16} height={16} />
+              </button>
+            </header>
+
+            <form className="project-modal-form" onSubmit={handleCreate}>
+              <div className="project-modal-section">
+                <label>아이콘 &amp; 색상</label>
+                <div className="project-appearance-picker">
+                  <div className="project-icon-preview" style={{ backgroundImage: selectedColor }}>
+                    {selectedIcon}
+                  </div>
+                  <div className="project-appearance-options">
+                    <div className="project-icon-options" aria-label="프로젝트 아이콘 선택">
+                      {PROJECT_ICONS.map((icon) => (
+                        <button
+                          key={icon}
+                          type="button"
+                          className={`project-icon-option ${selectedIcon === icon ? "selected" : ""}`}
+                          onClick={() => setSelectedIcon(icon)}
+                          aria-label={`${icon} 아이콘 선택`}
+                          aria-pressed={selectedIcon === icon}
+                        >
+                          {icon}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="project-color-options" aria-label="프로젝트 색상 선택">
+                      {PROJECT_COLORS.map((color, index) => (
+                        <button
+                          key={color}
+                          type="button"
+                          className="project-color-option"
+                          style={{ backgroundImage: color }}
+                          onClick={() => setSelectedColor(color)}
+                          aria-label={`${index + 1}번 색상 선택`}
+                          aria-pressed={selectedColor === color}
+                        >
+                          {selectedColor === color && (
+                            <img src="/icons/project-modal-check.svg" alt="" width={11} height={11} />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="project-modal-field">
+                <label htmlFor="project-name">
+                  프로젝트 이름 <span className="project-required">*</span>
+                </label>
+                <input
+                  id="project-name"
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="예: Mobile App 3.0"
+                  maxLength={40}
+                  autoFocus
+                />
+                <span className="project-name-count">{name.length}/40</span>
+              </div>
+
+              <div className="project-modal-field">
+                <label htmlFor="project-desc">
+                  프로젝트 설명 <span className="project-optional">(선택)</span>
+                </label>
+                <textarea
+                  id="project-desc"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="프로젝트 목표나 설명을 입력하세요"
+                  rows={3}
+                />
+              </div>
+
+              <div className="project-modal-field">
+                <label htmlFor="project-invite" className="project-invite-label">
+                  <img src="/icons/project-modal-users.svg" alt="" width={11} height={11} />
+                  팀원 초대 <span className="project-optional">(선택)</span>
+                </label>
+                <div className="project-invite-row">
+                  <input
+                    id="project-invite"
+                    type="email"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    placeholder="이메일 주소 입력"
+                  />
+                  <button type="button" className="project-invite-button">
+                    초대
+                  </button>
+                </div>
+              </div>
+
+              <div className="project-modal-actions">
+                <button type="button" className="project-modal-cancel" onClick={() => setShowForm(false)}>
+                  취소
+                </button>
+                <button type="submit" className="project-modal-submit" disabled={!name.trim()}>
+                  프로젝트 만들기
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

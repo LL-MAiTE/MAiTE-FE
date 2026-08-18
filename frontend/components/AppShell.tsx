@@ -256,6 +256,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               );
             })}
           </nav>
+
+          <div className="app-sidebar-promo" aria-hidden="true">
+            <div className="app-sidebar-promo-card">
+              <span className="app-sidebar-promo-sparkle">✨</span>
+              <p className="app-sidebar-promo-title">MAiTE Pro 업그레이드</p>
+              <p className="app-sidebar-promo-desc">더 많은 AI 기능을 경험해 보세요</p>
+              <span className="app-sidebar-promo-action">자세히 보기</span>
+            </div>
+          </div>
         </aside>
 
         <main className="app-main container">{children}</main>

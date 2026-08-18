@@ -2,11 +2,12 @@
 
 import { Fragment, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { EmptyState } from "@/components/Card";
 import { Badge, ConfidenceBadge } from "@/components/Badge";
 import { Meeting } from "@/lib/types";
+import HomeDashboardPage from "@/app/page";
 
 /**
  * 새 회의 만들기 — 5단계 위저드. Figma "새 회의 만들기 1~5"(1:2939, 1:4405, 1:5871,
@@ -34,6 +35,8 @@ const STEPS = [
 
 export default function NewMeetingPage({ params }: { params: { projectId: string } }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const closeHref = searchParams.get("from") === "home" ? "/" : `/projects/${params.projectId}`;
   const { getProject, getMeeting, createMeeting, regenerateDraftPositions } = useStore();
   const project = getProject(params.projectId);
 
@@ -88,10 +91,15 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
   };
 
   const latestPositions = createdMeeting?.positions ?? [];
+  const visualStep = step === 5 ? 4 : step;
 
   return (
-    <div className="wizard-shell">
-      <div className="breadcrumb">
+    <>
+      <div className="wizard-service-background" aria-hidden="true">
+        <HomeDashboardPage />
+      </div>
+      <div className="wizard-shell">
+      <div className="breadcrumb wizard-background-breadcrumb">
         <Link href="/">프로젝트</Link> / <Link href={`/projects/${project.id}`}>{project.name}</Link> /
         새 회의
       </div>
@@ -99,31 +107,31 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
       <div className="wizard-card">
         <div className="wizard-header">
           <h2 style={{ margin: 0 }}>새 회의 만들기</h2>
-          <Link href={`/projects/${project.id}`} className="wizard-close" aria-label="닫기">
-            ✕
+          <Link href={closeHref} className="wizard-close" aria-label="닫기">
+            <img src="/icons/project-modal-close.svg" alt="" width={16} height={16} />
           </Link>
         </div>
 
-        <div className="stepper">
+        <div className="stepper" aria-label={`새 회의 만들기 ${step}단계`}>
           {STEPS.map((s, i) => (
             <Fragment key={s.n}>
               <div className="stepper-step">
                 <div
-                  className={`stepper-circle ${step > s.n ? "done" : step === s.n ? "current" : ""}`}
+                  className={`stepper-circle ${visualStep > s.n ? "done" : visualStep === s.n ? "current" : ""}`}
                 >
-                  {step > s.n ? "✓" : s.n}
+                  {visualStep > s.n ? "✓" : s.n}
                 </div>
                 <span className="stepper-label">{s.label}</span>
               </div>
               {i < STEPS.length - 1 && (
-                <div className={`stepper-line ${step > s.n ? "done" : ""}`} />
+                <div className={`stepper-line ${visualStep > s.n ? "done" : ""}`} />
               )}
             </Fragment>
           ))}
         </div>
 
         {step === 1 && (
-          <div>
+          <div className="wizard-step-content wizard-step-one">
             <div className="field">
               <label htmlFor="meeting-title">회의 이름 *</label>
               <input
@@ -145,7 +153,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
                 rows={3}
               />
             </div>
-            <div className="row" style={{ justifyContent: "flex-end" }}>
+            <div className="wizard-actions wizard-actions-single">
               <button className="btn btn-primary" disabled={!title.trim()} onClick={() => setStep(2)}>
                 다음 →
               </button>
@@ -154,7 +162,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
         )}
 
         {step === 2 && (
-          <div>
+          <div className="wizard-step-content wizard-step-two">
             <p className="notice-banner">상대방 정보는 AI 안건 생성 및 다국어 통역에 활용됩니다</p>
             <div className="field">
               <label>상대방 국가</label>
@@ -196,7 +204,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
                 placeholder="예: 개발팀 리드, 13시간 시차"
               />
             </div>
-            <div className="row" style={{ justifyContent: "space-between" }}>
+            <div className="wizard-actions">
               <button className="btn" onClick={() => setStep(1)}>
                 이전
               </button>
@@ -208,7 +216,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
         )}
 
         {step === 3 && (
-          <div>
+          <div className="wizard-step-content wizard-step-three">
             <p className="notice-banner">최소 1개 선택 필수. ⭐ 핵심 문서는 기본 선택 상태입니다.</p>
             {[...coreDocs, ...otherDocs].length === 0 ? (
               <EmptyState
@@ -243,7 +251,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
             )}
             <p className="field-hint">{selectedIds.length}개 선택됨</p>
             {error && <p className="field-hint" style={{ color: "var(--tone-danger-fg)" }}>{error}</p>}
-            <div className="row" style={{ justifyContent: "space-between", marginTop: 12 }}>
+            <div className="wizard-actions">
               <button className="btn" onClick={() => setStep(2)}>
                 이전
               </button>
@@ -255,8 +263,8 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
         )}
 
         {step === 4 && (
-          <div className="ai-generating">
-            <div className="ai-generating-icon">✨</div>
+          <div className="ai-generating wizard-step-content">
+            <div className="ai-generating-icon"><span>✦</span></div>
             <h3>AI 안건 초안 생성 중…</h3>
             <p className="muted">선택한 {selectedIds.length}개 문서를 분석하고 있습니다</p>
             <div className="ai-generating-checklist">
@@ -268,13 +276,13 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
         )}
 
         {step === 5 && createdMeeting && (
-          <div>
+          <div className="wizard-step-content wizard-step-result">
             <div className="ai-generating" style={{ paddingBottom: 0 }}>
               <div className="ai-result-icon">✓</div>
               <h3>안건 초안 생성 완료!</h3>
               <p className="muted">{latestPositions.length}개 안건이 생성되었습니다. 검토 후 승인하세요.</p>
             </div>
-            <div style={{ margin: "16px 0" }}>
+            <div className="ai-result-preview">
               {latestPositions.slice(0, 4).map((p, i) => (
                 <div className="ai-result-preview-row" key={p.id}>
                   <span>
@@ -289,7 +297,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
                 </p>
               )}
             </div>
-            <div className="row" style={{ justifyContent: "space-between" }}>
+            <div className="wizard-actions">
               <button className="btn" onClick={() => setStep(3)}>
                 파일 재선택
               </button>
@@ -303,6 +311,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
