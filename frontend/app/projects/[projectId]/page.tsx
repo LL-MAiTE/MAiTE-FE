@@ -23,7 +23,7 @@ import { Badge, MeetingStatusBadge } from "@/components/Badge";
  * 순간에만 백엔드에 대응 프로젝트를 만든다(lib/backendApi.ts의 ensureBackendProjectId).
  */
 
-type Tab = "개요" | "회의" | "문서";
+type Tab = "개요" | "회의" | "문서" | "팀원";
 
 interface ProjectMember {
   id: string;
@@ -170,14 +170,14 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   };
 
   return (
-    <div>
-      <div className="breadcrumb">
+    <div className="project-detail-page">
+      <div className="breadcrumb project-breadcrumb">
         <Link href="/">← 프로젝트 목록</Link>
       </div>
 
       <div className="project-hero">
         <div className="project-hero-top">
-          <div className="row" style={{ alignItems: "flex-start", gap: 16 }}>
+          <div className="project-hero-identity">
             <div className="project-hero-icon">📁</div>
             <div>
               <span className="project-hero-badge">진행 중</span>
@@ -185,7 +185,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
               {project.description && <p className="project-hero-desc">{project.description}</p>}
             </div>
           </div>
-          <Link href={`/projects/${project.id}/meetings/new`} className="btn btn-primary">
+          <Link href={`/projects/${project.id}/meetings/new`} className="btn project-hero-action">
             + 새 회의 만들기
           </Link>
         </div>
@@ -229,8 +229,8 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
         </div>
       </div>
 
-      <div className="tab-list">
-        {(["개요", "회의", "문서"] as Tab[]).map((t) => (
+      <div className="tab-list project-tab-list">
+        {(["개요", "회의", "문서", "팀원"] as Tab[]).map((t) => (
           <button
             key={t}
             className={`tab-button ${tab === t ? "active" : ""}`}
@@ -243,8 +243,8 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
       </div>
 
       {tab === "개요" && (
-        <div className="two-col">
-          <Card>
+        <div className="project-overview-grid">
+          <Card className="project-overview-card">
             <h3>회의 현황</h3>
             <div className="stack">
               <StatusRow label="승인대기" count={stats.waitingApproval} color="var(--tone-warning-fg)" />
@@ -252,13 +252,13 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
               <StatusRow label="종료" count={stats.done} color="var(--tone-success-fg)" />
             </div>
           </Card>
-          <Card>
+          <Card className="project-overview-card">
             <h3>최근 문서</h3>
             {recentDocuments.length === 0 ? (
               <p className="muted">아직 연동된 문서가 없습니다.</p>
             ) : (
               recentDocuments.map((doc) => (
-                <div key={doc.id} className="row-between" style={{ padding: "6px 0" }}>
+                <div key={doc.id} className="row-between project-recent-document">
                   <span style={{ fontSize: 13 }}>
                     {doc.title} {doc.isCoreContext && <Badge tone="info">핵심</Badge>}
                   </span>
@@ -270,31 +270,33 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
         </div>
       )}
 
-      {tab === "개요" && (
-        <Card>
-          <div className="row-between">
-            <h3 style={{ margin: 0 }}>팀원 {membersLoading ? "" : `(${members.length}명)`}</h3>
+      {tab === "팀원" && (
+        <Card className="project-team-card">
+          <div className="project-team-header">
+            <div>
+              <h3>팀원 관리</h3>
+              <p className="field-hint">프로젝트에 참여하는 팀원을 관리하세요.</p>
+            </div>
+            <span className="project-team-count">{membersLoading ? "불러오는 중" : `${members.length}명`}</span>
           </div>
-          <p className="field-hint" style={{ marginTop: -6 }}>
-            초대하려는 사람이 백엔드에 먼저 회원가입돼 있어야 합니다.
-          </p>
-          <div className="stack" style={{ marginTop: 8 }}>
+          <div className="project-member-grid">
             {members.map((m) => (
-              <div key={m.id} className="row-between">
-                <span style={{ fontSize: 13 }}>
-                  <strong>{m.userName}</strong> <span className="muted">{m.userEmail}</span>
+              <div key={m.id} className="project-member-row">
+                <span className="project-member-avatar">{m.userName.slice(0, 1)}</span>
+                <span className="project-member-copy">
+                  <strong>{m.userName}</strong>
+                  <span>{m.userEmail}</span>
                 </span>
                 <Badge tone="neutral">{ROLE_LABEL[m.role] ?? m.role}</Badge>
               </div>
             ))}
           </div>
-          <form onSubmit={handleInvite} className="row" style={{ marginTop: 12 }}>
+          <form onSubmit={handleInvite} className="project-invite-form">
             <input
               type="email"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
               placeholder="초대할 사람 이메일"
-              style={{ flex: 1 }}
               disabled={inviting}
             />
             <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} disabled={inviting}>
@@ -311,8 +313,8 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
       )}
 
       {tab === "회의" && (
-        <section>
-          <div className="section-header">
+        <section className="project-tab-panel project-meetings-panel">
+          <div className="section-header project-panel-header">
             <h2>회의 목록 ({meetings.length}개)</h2>
             <Link href={`/projects/${project.id}/meetings/new`} className="btn btn-sm btn-primary">
               + 새 회의
@@ -343,8 +345,8 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
       )}
 
       {tab === "문서" && (
-        <section>
-          <Card>
+        <section className="project-tab-panel project-documents-panel">
+          <Card className="project-source-card">
             <div className="row-between">
               <div>
                 <h3 style={{ marginBottom: 2 }}>문서 소스 연동</h3>
@@ -357,7 +359,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
               </button>
             </div>
 
-            <div className="source-option-grid" style={{ marginTop: 16 }}>
+            <div className="source-option-grid">
               <button className="source-option" disabled title="이번 스코프에서는 제외 (추후 지원 예정)">
                 📓 Notion
               </button>
@@ -470,10 +472,12 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
             )}
           </Card>
 
-          <h3 style={{ marginTop: 20 }}>문서 목록 ({project.documents.length}개)</h3>
-          <p className="field-hint" style={{ marginTop: -6 }}>
-            ⭐ 표시 문서는 회의 생성 시 우선 노출됩니다
-          </p>
+          <div className="project-document-list-heading">
+            <div>
+              <h3>문서 목록 ({project.documents.length}개)</h3>
+              <p className="field-hint">⭐ 표시 문서는 회의 생성 시 우선 노출됩니다</p>
+            </div>
+          </div>
           {project.documents.length === 0 ? (
             <EmptyState
               title="아직 연동된 문서가 없습니다"
@@ -481,7 +485,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
             />
           ) : (
             project.documents.map((doc) => (
-              <Card key={doc.id}>
+              <Card key={doc.id} className="project-document-row">
                 <div className="row-between">
                   <div className="row" style={{ alignItems: "flex-start" }}>
                     <span className="list-row-icon">

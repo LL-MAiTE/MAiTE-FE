@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { Card, EmptyState } from "@/components/Card";
 import { MeetingStatusBadge } from "@/components/Badge";
@@ -32,6 +32,8 @@ const PROJECT_COLORS = [
  */
 export default function HomeDashboardPage() {
   const router = useRouter();
+  const pathname = usePathname();
+  const isProjectDashboard = pathname === "/projects";
   const { projects, meetings, getMeetingsByProject, createProject } = useStore();
   const [showForm, setShowForm] = useState(false);
   const [showMeetingProjectPicker, setShowMeetingProjectPicker] = useState(false);
@@ -123,13 +125,15 @@ export default function HomeDashboardPage() {
   );
 
   return (
-    <div>
-      <div className="page-header">
-        <h1>대시보드</h1>
-        <p className="muted">안녕하세요, 재현님! 오늘도 효율적인 협업을 시작해보세요 👋</p>
-      </div>
+    <div className={isProjectDashboard ? "project-dashboard-page" : ""}>
+      {!isProjectDashboard && (
+        <>
+          <div className="page-header">
+            <h1>대시보드</h1>
+            <p className="muted">안녕하세요, 재현님! 오늘도 효율적인 협업을 시작해보세요 👋</p>
+          </div>
 
-      <div className="dashboard-grid">
+          <div className="dashboard-grid">
         <div className="stack">
           <Card>
             <div className="widget-card-header">
@@ -244,45 +248,63 @@ export default function HomeDashboardPage() {
             </ol>
           </div>
         </div>
-      </div>
-
-      <section className="section">
-        <div className="section-header">
-          <h2>프로젝트 ({projects.length}개)</h2>
-          <button className="btn btn-sm btn-primary" onClick={() => setShowForm((v) => !v)}>
-            + 새 프로젝트
-          </button>
-        </div>
-
-        {projects.length === 0 ? (
-          <EmptyState
-            title="아직 프로젝트가 없습니다"
-            description="새 프로젝트를 만들고 문서를 쌓기 시작하세요."
-          />
-        ) : (
-          <div className="grid grid-2">
-            {projects.map((project) => {
-              const projectMeetings = getMeetingsByProject(project.id);
-              return (
-                <Link key={project.id} href={`/projects/${project.id}`} className="card card-link">
-                  <div className="row-between" style={{ alignItems: "flex-start" }}>
-                    <span className="widget-icon-badge" style={{ width: 40, height: 40, fontSize: 18 }}>
-                      📁
-                    </span>
-                    <span className="badge badge-info">진행 중</span>
-                  </div>
-                  <h3 style={{ marginTop: 12 }}>{project.name}</h3>
-                  {project.description && <p className="muted">{project.description}</p>}
-                  <div className="row" style={{ marginTop: 8 }}>
-                    <span className="badge badge-neutral">문서 {project.documents.length}개</span>
-                    <span className="badge badge-neutral">회의 {projectMeetings.length}개</span>
-                  </div>
-                </Link>
-              );
-            })}
           </div>
-        )}
-      </section>
+        </>
+      )}
+
+      {isProjectDashboard && (
+        <section className="section project-dashboard-section">
+          <div className="section-header project-dashboard-header">
+            <div>
+              <h2>프로젝트</h2>
+              <p>총 {projects.length}개의 프로젝트가 있습니다</p>
+            </div>
+            <button className="btn btn-sm btn-primary" onClick={() => setShowForm((v) => !v)}>
+              + 새 프로젝트 만들기
+            </button>
+          </div>
+
+          {projects.length === 0 ? (
+            <EmptyState
+              title="아직 프로젝트가 없습니다"
+              description="새 프로젝트를 만들고 문서를 쌓기 시작하세요."
+            />
+          ) : (
+            <div className="project-dashboard-grid">
+              {projects.map((project) => {
+                const projectMeetings = getMeetingsByProject(project.id);
+                const completedMeetings = projectMeetings.filter((meeting) => meeting.status === "종료").length;
+                const progress = projectMeetings.length
+                  ? Math.round((completedMeetings / projectMeetings.length) * 100)
+                  : 0;
+                return (
+                  <Link key={project.id} href={`/projects/${project.id}`} className="project-dashboard-card">
+                    <div className="project-dashboard-card-top">
+                      <span className="project-dashboard-card-icon">
+                        📁
+                      </span>
+                      <span className="badge badge-info">진행 중</span>
+                    </div>
+                    <h3>{project.name}</h3>
+                    <p className="project-dashboard-card-description">{project.description || "프로젝트 설명이 없습니다."}</p>
+                    <div className="project-dashboard-progress-label">
+                      <span>진행률</span>
+                      <strong>{progress}%</strong>
+                    </div>
+                    <div className="project-dashboard-progress-track">
+                      <span style={{ width: `${progress}%` }} />
+                    </div>
+                    <div className="project-dashboard-card-meta">
+                      <span><img src="/icons/icon-document.svg" alt="" width={14} height={14} />문서 {project.documents.length}개</span>
+                      <span><img src="/icons/icon-video.svg" alt="" width={14} height={14} />회의 {projectMeetings.length}개</span>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       {showMeetingProjectPicker && (
         <div

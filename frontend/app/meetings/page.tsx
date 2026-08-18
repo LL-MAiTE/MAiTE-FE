@@ -23,8 +23,9 @@ import { MeetingStatus } from "@/lib/types";
 
 const TABS: { key: MeetingStatus | "전체"; label: string }[] = [
   { key: "전체", label: "전체" },
+  { key: "준비중", label: "준비중" },
   { key: "승인대기", label: "승인대기" },
-  { key: "라이브", label: "라이브" },
+  { key: "라이브", label: "진행중" },
   { key: "후속답변대기", label: "후속답변대기" },
   { key: "종료", label: "종료" },
 ];
@@ -53,18 +54,18 @@ export default function AllMeetingsPage() {
   };
 
   return (
-    <div>
-      <div className="page-header page-header-row">
+    <div className="meetings-dashboard-page">
+      <div className="page-header page-header-row meetings-page-header">
         <div>
           <h1>회의</h1>
-          <p className="muted">모든 프로젝트의 회의 기록을 한 곳에서 확인하세요</p>
+          <p className="muted">모든 AI 회의 기록과 요약을 확인하세요</p>
         </div>
-        <Link href="/" className="btn btn-primary">
+        <Link href="/" className="btn btn-primary meetings-create-button">
           + 새 회의 만들기
         </Link>
       </div>
 
-      <div className="tab-list">
+      <div className="tab-list meetings-filter-tabs">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -72,48 +73,52 @@ export default function AllMeetingsPage() {
             className={`tab-button ${tab === t.key ? "active" : ""}`}
             onClick={() => setTab(t.key)}
           >
-            {t.label} {countFor(t.key) > 0 && `(${countFor(t.key)})`}
+            <span>{t.label}</span>
+            <span className="meetings-filter-count">{countFor(t.key) || "–"}</span>
           </button>
         ))}
       </div>
 
-      {sorted.length === 0 ? (
-        <EmptyState title="해당 상태의 회의가 없습니다" description="다른 탭을 선택하거나 새 회의를 만들어보세요." />
-      ) : (
-        sorted.map((meeting) => {
-          const project = projects.find((p) => p.id === meeting.projectId);
-          return (
-            <Link
-              key={meeting.id}
-              href={statusLink(meeting.id, meeting.projectId, meeting.status)}
-              className="list-row"
-              style={{ alignItems: "flex-start" }}
-            >
-              <span className="list-row-icon">
-                <img src="/icons/icon-calendar.svg" alt="" width={16} height={16} />
-              </span>
-              <div style={{ flex: 1 }}>
-                <div className="row">
-                  <strong>{meeting.title}</strong>
-                  <MeetingStatusBadge status={meeting.status} />
+      <div className="meetings-list">
+        {sorted.length === 0 ? (
+          <EmptyState title="해당 상태의 회의가 없습니다" description="다른 탭을 선택하거나 새 회의를 만들어보세요." />
+        ) : (
+          sorted.map((meeting) => {
+            const project = projects.find((p) => p.id === meeting.projectId);
+            return (
+              <Link
+                key={meeting.id}
+                href={statusLink(meeting.id, meeting.projectId, meeting.status)}
+                className="meeting-dashboard-card"
+              >
+                <div className="meeting-dashboard-main">
+                  <div className="meeting-dashboard-title-row">
+                    <strong>{meeting.title}</strong>
+                    <MeetingStatusBadge status={meeting.status} />
+                  </div>
+                  {project && (
+                    <p className="meeting-dashboard-project">
+                      <span className="meeting-dashboard-project-icon">📁</span>
+                      {project.name}
+                      <span aria-hidden="true">›</span>
+                    </p>
+                  )}
+                  <p className="meeting-dashboard-purpose">{meeting.purpose}</p>
+                  <div className="meeting-dashboard-actions" aria-hidden="true">
+                    <span className="meeting-dashboard-detail-button">자세히 보기</span>
+                  </div>
                 </div>
-                {project && (
-                  <p className="muted" style={{ margin: "2px 0 0" }}>
-                    {project.name}
-                  </p>
-                )}
-                <p style={{ margin: "4px 0 0", fontSize: 13 }}>{meeting.purpose}</p>
-              </div>
-              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <div className="muted">{new Date(meeting.createdAt).toLocaleDateString("ko-KR")}</div>
-                <div className="muted" style={{ marginTop: 2 }}>
+                <div className="meeting-dashboard-meta">
+                  <strong>{new Date(meeting.createdAt).toLocaleDateString("ko-KR")}</strong>
+                  <span>
                   {new Date(meeting.createdAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
                 </div>
-              </div>
-            </Link>
-          );
-        })
-      )}
+              </Link>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

@@ -10,8 +10,8 @@ import { useStore } from "@/lib/store";
  * 공용 앱 셸 (탑바 + 사이드바 + 메인 콘텐츠 영역).
  * Figma 홈 대시보드(1:7)의 TopNav(1:1419)/Sidebar(1:1275) 노드를 기반으로 만들었다.
  *
- * 라우팅 모델상 "홈"과 "프로젝트 목록"이 같은 페이지(`/`)라서 두 항목 모두 그 경로로
- * 연결한다. "회의"는 프로젝트를 가로지르는 전체 회의 목록(`/meetings`)으로 연결된다 —
+ * "홈"은 `/`, 프로젝트 목록은 `/projects`로 연결한다. "회의"는 프로젝트를 가로지르는
+ * 전체 회의 목록(`/meetings`)으로 연결된다 —
  * Figma의 "회의_전체/준비중/승인완료/진행중/후속답변대기/종료" 노드들이 실제로는 전부
  * 이 목록 화면의 상태 탭 스크린샷이었다.
  *
@@ -46,7 +46,7 @@ const NAV_ITEMS: {
     key: "projects",
     label: "프로젝트",
     icon: "/icons/nav-projects.svg",
-    href: "/",
+    href: "/projects",
     activeMatch: (p) => p.startsWith("/projects"),
   },
   {
@@ -138,6 +138,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const completedMeetings = meetings.filter((m) => m.status === "종료").length;
+  const liveMeeting = meetings.find((m) => m.status === "라이브");
+  const liveProject = liveMeeting ? projects.find((project) => project.id === liveMeeting.projectId) : undefined;
+  const isLivePage = pathname?.includes("/meetings/") && pathname.endsWith("/live");
   const pendingHoldCount = meetings.reduce(
     (sum, m) => sum + m.holdItems.filter((h) => h.status === "보류" || h.status === "후속답변대기").length,
     0
@@ -269,6 +272,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <main className="app-main container">{children}</main>
       </div>
+
+      {liveMeeting && !isLivePage && (
+        <aside className="live-meeting-floater" aria-label="진행 중인 실시간 회의">
+          <Link
+            href={`/projects/${liveMeeting.projectId}/meetings/${liveMeeting.id}/live`}
+            className="live-meeting-floater-link"
+            aria-label={`${liveMeeting.title} 실시간 회의로 돌아가기`}
+          >
+            <span className="live-meeting-floater-avatar" aria-hidden="true">
+              ✨
+              <span className="live-meeting-floater-online" />
+            </span>
+            <span className="live-meeting-floater-copy">
+              <span className="live-meeting-floater-status">
+                <span /> LIVE
+              </span>
+              <strong>{liveMeeting.title}</strong>
+              <small>{liveProject?.name ?? liveMeeting.counterpartInfo}</small>
+            </span>
+            <span className="live-meeting-floater-wave" aria-hidden="true">
+              {Array.from({ length: 12 }, (_, index) => <i key={index} />)}
+            </span>
+            <span className="live-meeting-floater-expand" aria-hidden="true">↗</span>
+          </Link>
+        </aside>
+      )}
     </div>
   );
 }

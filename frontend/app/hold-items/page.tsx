@@ -30,6 +30,18 @@ export default function HoldItemsPage() {
   const { meetings, projects } = useStore();
   const [tab, setTab] = useState<Tab>("전체");
 
+  const allItems = useMemo(
+    () => meetings.flatMap((meeting) => meeting.holdItems),
+    [meetings]
+  );
+
+  const unresolvedCount = allItems.filter(
+    (item) => item.status === "보류" || item.status === "후속답변대기"
+  ).length;
+
+  const countFor = (key: Tab) =>
+    key === "전체" ? allItems.length : allItems.filter((item) => item.status === key).length;
+
   const rows = useMemo(() => {
     const all: { item: HoldItem; meetingId: string; meetingTitle: string; projectId: string }[] = [];
     for (const meeting of meetings) {
@@ -43,13 +55,20 @@ export default function HoldItemsPage() {
   }, [meetings, tab]);
 
   return (
-    <div>
-      <div className="page-header">
-        <h1>보류함</h1>
-        <p className="muted">모든 회의의 보류 항목을 모아봅니다. 후속 답변 작성은 해당 회의의 결과 검토 화면에서 진행합니다.</p>
+    <div className="hold-dashboard-page">
+      <div className="page-header page-header-row hold-page-header">
+        <div>
+          <h1>보류 항목 관리</h1>
+          <p className="muted">회의 중 보류된 사안을 비동기로 처리하세요</p>
+        </div>
+        <div className="hold-unresolved-summary">
+          <span aria-hidden="true">⚠</span>
+          <strong>미해결 {unresolvedCount}건</strong>
+          <span>· 답변 필요</span>
+        </div>
       </div>
 
-      <div className="tab-list">
+      <div className="tab-list hold-filter-tabs">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -57,33 +76,38 @@ export default function HoldItemsPage() {
             onClick={() => setTab(t.key)}
             type="button"
           >
-            {t.label}
+            <span>{t.label}</span>
+            <span className="hold-filter-count">{countFor(t.key)}</span>
           </button>
         ))}
       </div>
 
-      {rows.length === 0 ? (
-        <EmptyState title="보류 항목이 없습니다" description="선택한 상태에 해당하는 보류 항목이 없습니다." />
-      ) : (
-        rows.map(({ item, meetingId, meetingTitle, projectId }) => (
-          <Link
-            key={item.id}
-            href={`/projects/${projectId}/meetings/${meetingId}/review`}
-            className="list-row"
-          >
-            <span className="list-row-icon">
-              <img src="/icons/nav-hold.svg" alt="" width={16} height={16} />
-            </span>
-            <div style={{ flex: 1 }}>
-              <strong>{item.relatedTopic ?? "(주제 미상)"}</strong>
-              <p className="muted" style={{ margin: "2px 0 0" }}>
-                {meetingTitle} · {projects.find((p) => p.id === projectId)?.name} · {item.reason}
-              </p>
-            </div>
-            <HoldStatusBadge status={item.status} />
-          </Link>
-        ))
-      )}
+      <div className="hold-items-list">
+        {rows.length === 0 ? (
+          <EmptyState title="보류 항목이 없습니다" description="선택한 상태에 해당하는 보류 항목이 없습니다." />
+        ) : (
+          rows.map(({ item, meetingId, meetingTitle, projectId }) => (
+            <Link
+              key={item.id}
+              href={`/projects/${projectId}/meetings/${meetingId}/review`}
+              className={`hold-dashboard-card status-${item.status}`}
+            >
+              <div className="hold-dashboard-card-top">
+                <span className="hold-dashboard-meeting">
+                  <span aria-hidden="true">🌐</span>
+                  <strong>{meetingTitle}</strong>
+                </span>
+                <HoldStatusBadge status={item.status} />
+              </div>
+              <p className="hold-dashboard-reason">{item.reason}</p>
+              <div className="hold-dashboard-card-meta">
+                <span>{projects.find((p) => p.id === projectId)?.name}</span>
+                {item.reopenCount > 0 && <span>↻ 재오픈 {item.reopenCount}/2</span>}
+              </div>
+            </Link>
+          ))
+        )}
+      </div>
     </div>
   );
 }
