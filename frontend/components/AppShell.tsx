@@ -13,9 +13,12 @@ import { useStore } from "@/lib/store";
  * 라우팅 모델상 "홈"과 "프로젝트 목록"이 같은 페이지(`/`)라서 두 항목 모두 그 경로로
  * 연결한다. "회의"는 프로젝트를 가로지르는 전체 회의 목록(`/meetings`)으로 연결된다 —
  * Figma의 "회의_전체/준비중/승인완료/진행중/후속답변대기/종료" 노드들이 실제로는 전부
- * 이 목록 화면의 상태 탭 스크린샷이었다. 보류 항목/필수검토/설정은 이번 스코프에서
- * 명시적으로 제외된 화면이라 별도 전역 라우트를 만들지 않고 비활성 항목으로 시각만
- * 표시한다 — 배지 숫자는 실제 store 데이터를 집계해서 보여준다.
+ * 이 목록 화면의 상태 탭 스크린샷이었다.
+ *
+ * 보류항목/필수검토는 백엔드에 "여러 프로젝트 통틀어 조회" 엔드포인트가 아직 없어서,
+ * 로컬(mock) 데이터를 모아 보여주는 전역 화면(`/hold-items`, `/mandatory-reviews`)으로
+ * 연결한다 — 배지 숫자와 같은 데이터 소스다. 설정(`/settings`)은 대응하는 데이터가
+ * 없어 정적 미리보기 화면으로 연결한다.
  *
  * 알림(종 아이콘)은 백엔드에 이미 구현돼 있어서(GET /notifications 등) 실제로 연결했다 —
  * 로그인이 없는 스코프라 고정 서비스 계정의 알림함을 그대로 보여준다.
@@ -34,7 +37,7 @@ const NAV_ITEMS: {
   key: string;
   label: string;
   icon: string;
-  href?: string;
+  href: string;
   activeMatch?: (pathname: string) => boolean;
   countKey?: "hold" | "mandatory";
 }[] = [
@@ -53,9 +56,29 @@ const NAV_ITEMS: {
     href: "/meetings",
     activeMatch: (p) => p.startsWith("/meetings"),
   },
-  { key: "hold", label: "보류 항목", icon: "/icons/nav-hold.svg", countKey: "hold" },
-  { key: "mandatory", label: "필수검토", icon: "/icons/nav-mandatory.svg", countKey: "mandatory" },
-  { key: "settings", label: "설정", icon: "/icons/nav-settings.svg" },
+  {
+    key: "hold",
+    label: "보류 항목",
+    icon: "/icons/nav-hold.svg",
+    href: "/hold-items",
+    activeMatch: (p) => p.startsWith("/hold-items"),
+    countKey: "hold",
+  },
+  {
+    key: "mandatory",
+    label: "필수검토",
+    icon: "/icons/nav-mandatory.svg",
+    href: "/mandatory-reviews",
+    activeMatch: (p) => p.startsWith("/mandatory-reviews"),
+    countKey: "mandatory",
+  },
+  {
+    key: "settings",
+    label: "설정",
+    icon: "/icons/nav-settings.svg",
+    href: "/settings",
+    activeMatch: (p) => p.startsWith("/settings"),
+  },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -217,33 +240,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {NAV_ITEMS.map((item) => {
               const isActive = item.activeMatch ? item.activeMatch(pathname ?? "") : false;
               const count = countFor(item.countKey);
-              if (item.href) {
-                return (
-                  <Link
-                    key={item.key}
-                    href={item.href}
-                    className={`app-nav-item ${isActive ? "active" : ""}`}
-                  >
-                    <span className="app-nav-icon">
-                      <img src={item.icon} alt="" />
-                    </span>
-                    <span className="app-nav-item-label">{item.label}</span>
-                    {isActive && <span className="app-nav-dot" />}
-                  </Link>
-                );
-              }
               return (
-                <span
+                <Link
                   key={item.key}
-                  className="app-nav-item disabled"
-                  title="프로젝트 상세 화면에서 확인할 수 있습니다 (이번 스코프에서는 별도 전역 화면 없음)"
+                  href={item.href}
+                  className={`app-nav-item ${isActive ? "active" : ""}`}
                 >
                   <span className="app-nav-icon">
                     <img src={item.icon} alt="" />
                   </span>
                   <span className="app-nav-item-label">{item.label}</span>
                   {count > 0 && <span className="app-nav-badge">{count}</span>}
-                </span>
+                  {isActive && <span className="app-nav-dot" />}
+                </Link>
               );
             })}
           </nav>

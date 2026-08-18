@@ -55,3 +55,12 @@ const HOLD_TONE: Record<string, BadgeTone> = {
 export function HoldStatusBadge({ status }: { status: string }) {
   return <Badge tone={HOLD_TONE[status] ?? "neutral"}>{status}</Badge>;
 }
+
+const MANDATORY_REVIEW_TONE: Record<string, BadgeTone> = {
+  확인전: "warning",
+  확인후확정: "success",
+};
+
+export function MandatoryReviewStatusBadge({ status }: { status: string }) {
+  return <Badge tone={MANDATORY_REVIEW_TONE[status] ?? "neutral"}>{status}</Badge>;
+}
