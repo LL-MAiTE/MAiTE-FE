@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -15,7 +16,19 @@ import { useStore } from "@/lib/store";
  * 이 목록 화면의 상태 탭 스크린샷이었다. 보류 항목/필수검토/설정은 이번 스코프에서
  * 명시적으로 제외된 화면이라 별도 전역 라우트를 만들지 않고 비활성 항목으로 시각만
  * 표시한다 — 배지 숫자는 실제 store 데이터를 집계해서 보여준다.
+ *
+ * 알림(종 아이콘)은 백엔드에 이미 구현돼 있어서(GET /notifications 등) 실제로 연결했다 —
+ * 로그인이 없는 스코프라 고정 서비스 계정의 알림함을 그대로 보여준다.
  */
+
+interface NotificationItem {
+  id: string;
+  type: string;
+  referenceId: string;
+  referenceType: string;
+  isRead: boolean;
+  createdAt: string;
+}
 
 const NAV_ITEMS: {
   key: string;
@@ -49,6 +62,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { projects, meetings } = useStore();
   const pathname = usePathname();
 
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [notifLoading, setNotifLoading] = useState(false);
+  const [notifError, setNotifError] = useState<string | null>(null);
+
+  const fetchNotifications = async () => {
+    setNotifLoading(true);
+    setNotifError(null);
+    try {
+      const res = await fetch("/api/backend/notifications");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setNotifications(data.notifications);
+    } catch (err) {
+      setNotifError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
+
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  const handleMarkRead = async (id: string) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+    try {
+      await fetch("/api/backend/notifications/mark-read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notificationId: id }),
+      });
+    } catch {
+      // 실패해도 다음에 열 때 다시 불러오면 맞춰지니 조용히 무시
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    try {
+      await fetch("/api/backend/notifications/mark-read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ all: true }),
+      });
+    } catch {
+      // 위와 동일
+    }
+  };
+
   const completedMeetings = meetings.filter((m) => m.status === "종료").length;
   const pendingHoldCount = meetings.reduce(
     (sum, m) => sum + m.holdItems.filter((h) => h.status === "보류" || h.status === "후속답변대기").length,
@@ -77,9 +142,50 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </span>
         </Link>
         <div className="app-topbar-actions">
-          <button className="app-icon-btn" type="button" title="알림 (이번 스코프에서 제외)" disabled>
-            <img src="/icons/bell.svg" alt="알림" />
-          </button>
+          <div className="app-notif-wrap">
+            <button
+              className="app-icon-btn"
+              type="button"
+              title="알림"
+              onClick={() => setNotifOpen((v) => !v)}
+            >
+              <img src="/icons/bell.svg" alt="알림" />
+              {unreadCount > 0 && <span className="app-notif-dot">{unreadCount}</span>}
+            </button>
+
+            {notifOpen && (
+              <div className="app-notif-panel">
+                <div className="app-notif-panel-header">
+                  <strong>알림</strong>
+                  {unreadCount > 0 && (
+                    <button className="app-notif-mark-all" type="button" onClick={handleMarkAllRead}>
+                      모두 읽음
+                    </button>
+                  )}
+                </div>
+                {notifLoading && <p className="muted" style={{ padding: "12px 16px" }}>불러오는 중…</p>}
+                {notifError && (
+                  <p style={{ padding: "12px 16px", color: "var(--tone-danger-fg)" }}>{notifError}</p>
+                )}
+                {!notifLoading && !notifError && notifications.length === 0 && (
+                  <p className="muted" style={{ padding: "12px 16px" }}>알림이 없습니다.</p>
+                )}
+                {notifications.map((n) => (
+                  <button
+                    key={n.id}
+                    type="button"
+                    className={`app-notif-item ${n.isRead ? "" : "unread"}`}
+                    onClick={() => handleMarkRead(n.id)}
+                  >
+                    <span className="app-notif-item-type">{n.type}</span>
+                    <span className="app-notif-item-meta">
+                      {n.referenceType} · {new Date(n.createdAt).toLocaleString("ko-KR")}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 

@@ -61,6 +61,20 @@ export async function createBackendProject(name: string): Promise<BackendProject
   return backendFetch<BackendProject>("/projects", { method: "POST", body: { name } });
 }
 
+/**
+ * 로컬(mock) 프로젝트에 대응하는 백엔드 실 프로젝트를 보장한다 — 이미 링크돼 있으면
+ * 그대로 재사용하고, 없으면 지금 만들고 링크를 저장한다. sync-meeting/project-members/
+ * git-sync 세 경로가 전부 이 함수 하나를 공유해서 중복 생성을 막는다.
+ */
+export async function ensureBackendProjectId(localProjectId: string, projectName: string): Promise<string> {
+  const { getBackendProjectId, saveBackendProjectId } = await import("./backendMeetingLinkStore");
+  const existing = getBackendProjectId(localProjectId);
+  if (existing) return existing;
+  const project = await createBackendProject(projectName);
+  saveBackendProjectId(localProjectId, project.id);
+  return project.id;
+}
+
 export interface BackendAgenda {
   id: string;
   projectId: string;
@@ -144,4 +158,102 @@ export async function startBackendMeeting(meetingId: string): Promise<BackendMee
 
 export async function endBackendMeeting(meetingId: string): Promise<void> {
   await backendFetch<{ success: boolean }>(`/meetings/${meetingId}/end`, { method: "POST" });
+}
+
+// ---------------------------------------------------------------------------
+// 알림
+// ---------------------------------------------------------------------------
+
+export interface BackendNotification {
+  id: string;
+  type: string;
+  referenceId: string;
+  referenceType: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export async function listBackendNotifications(): Promise<BackendNotification[]> {
+  return backendFetch<BackendNotification[]>("/notifications");
+}
+
+export async function markBackendNotificationRead(id: string): Promise<void> {
+  await backendFetch(`/notifications/${id}/read`, { method: "PATCH" });
+}
+
+export async function markAllBackendNotificationsRead(): Promise<void> {
+  await backendFetch("/notifications/read-all", { method: "PATCH" });
+}
+
+// ---------------------------------------------------------------------------
+// 프로젝트 멤버
+// ---------------------------------------------------------------------------
+
+export interface BackendUser {
+  id: string;
+  email: string;
+  name: string;
+}
+
+/** 이메일로 사용자를 찾는다 — 상대가 백엔드에 이미 회원가입돼 있어야 한다(로그인 화면이
+ * 없는 이번 스코프에선 초대 전에 미리 회원가입해두라고 안내해야 함). 없으면 null. */
+export async function searchBackendUserByEmail(email: string): Promise<BackendUser | null> {
+  try {
+    return await backendFetch<BackendUser>(`/users?email=${encodeURIComponent(email)}`);
+  } catch {
+    return null;
+  }
+}
+
+export interface BackendProjectMember {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role: string;
+}
+
+export async function listBackendProjectMembers(backendProjectId: string): Promise<BackendProjectMember[]> {
+  return backendFetch<BackendProjectMember[]>(`/projects/${backendProjectId}/members`);
+}
+
+export async function inviteBackendProjectMember(
+  backendProjectId: string,
+  userId: string,
+  role: "ANSWERER" | "QUESTIONER" | "TEAM_MANAGER"
+): Promise<BackendProjectMember> {
+  return backendFetch<BackendProjectMember>(`/projects/${backendProjectId}/members`, {
+    method: "POST",
+    body: { userId, role },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 문서 소스 연동 (Git)
+// ---------------------------------------------------------------------------
+
+export interface BackendConnection {
+  id: string;
+  type: string;
+  workspaceOrRepoName: string;
+}
+
+export async function createBackendConnection(
+  backendProjectId: string,
+  repo: string,
+  accessToken: string
+): Promise<BackendConnection> {
+  return backendFetch<BackendConnection>(`/projects/${backendProjectId}/connections`, {
+    method: "POST",
+    body: { type: "GIT", workspaceOrRepoName: repo, accessToken },
+  });
+}
+
+export interface BackendSyncResult {
+  syncedCount: number;
+  latestFiles: string[];
+}
+
+export async function syncBackendConnection(connectionId: string): Promise<BackendSyncResult> {
+  return backendFetch<BackendSyncResult>(`/connections/${connectionId}/sync`, { method: "POST" });
 }

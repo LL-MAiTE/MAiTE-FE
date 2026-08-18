@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { Card, EmptyState } from "@/components/Card";
@@ -10,18 +10,34 @@ import { Badge, MeetingStatusBadge } from "@/components/Badge";
  * 프로젝트 상세 페이지. Figma "프로젝트_개요/회의/문서"(1:19158, 1:20172, 1:21186) 탭
  * 구조를 기반으로 만들었다.
  *
- * 디자인 원본의 "마일스톤"/"팀원"/"진행률"/"최근 활동"은 이 앱의 데이터 모델에 없는
- * 개념이라(팀원·마일스톤은 이번 스코프에서 명시적으로 제외된 항목이기도 함) 그대로
- * 베끼지 않고, 실제 store 데이터로 채울 수 있는 값으로 바꿨다:
+ * 디자인 원본의 "마일스톤"/"진행률"/"최근 활동"은 이 앱의 데이터 모델에 없는 개념이라
+ * 그대로 베끼지 않고, 실제 store 데이터로 채울 수 있는 값으로 바꿨다:
  *  - "전체 진행률" → 종료된 회의 비율
  *  - 통계 카드 4개 → 문서/회의/진행 중 회의/완료 회의 실제 카운트
  *  - "마일스톤" 패널 → "회의 현황" (상태별 실제 분포)
  *  - "최근 활동" → "최근 문서" (프로젝트 문서 실데이터)
- *  - "문서 소스 연동"의 Notion/Git 연동은 아직 구현되어 있지 않아 비활성 처리하고
- *    실제로 동작하는 "MD 붙여넣기"만 남겼다.
+ *
+ * "팀원"과 "문서 소스 연동 — Git"은 백엔드에 이미 구현돼 있어서(GET/POST members,
+ * 실제 GitHub API 기반 sync) 실제로 연결했다. Notion 연동은 백엔드도 아직 stub이라
+ * 비활성으로 남겨뒀다. 프로젝트는 로컬 mock이 원본이라, 이 두 기능을 처음 쓰는
+ * 순간에만 백엔드에 대응 프로젝트를 만든다(lib/backendApi.ts의 ensureBackendProjectId).
  */
 
 type Tab = "개요" | "회의" | "문서";
+
+interface ProjectMember {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  role: string;
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  ANSWERER: "답변 작성자",
+  QUESTIONER: "질문 참여자",
+  TEAM_MANAGER: "팀 매니저",
+};
 
 export default function ProjectDetailPage({ params }: { params: { projectId: string } }) {
   const { getProject, getMeetingsByProject, addDocument } = useStore();
@@ -33,6 +49,38 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [isCoreContext, setIsCoreContext] = useState(false);
+
+  // 팀원
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("ANSWERER");
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
+
+  // Git 연동
+  const [showGitForm, setShowGitForm] = useState(false);
+  const [gitRepo, setGitRepo] = useState("");
+  const [gitToken, setGitToken] = useState("");
+  const [gitSyncing, setGitSyncing] = useState(false);
+  const [gitError, setGitError] = useState<string | null>(null);
+  const [gitResult, setGitResult] = useState<{ syncedCount: number; latestFiles: string[] } | null>(null);
+
+  const fetchMembers = async (projectId: string) => {
+    setMembersLoading(true);
+    try {
+      const res = await fetch(`/api/backend/project-members?localProjectId=${projectId}`);
+      const data = await res.json();
+      if (res.ok) setMembers(data.members);
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (project) fetchMembers(project.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
 
   const stats = useMemo(() => {
     const done = meetings.filter((m) => m.status === "종료").length;
@@ -64,6 +112,61 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     setContent("");
     setIsCoreContext(false);
     setShowUpload(false);
+  };
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    setInviteError(null);
+    try {
+      const res = await fetch("/api/backend/project-members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          localProjectId: project.id,
+          projectName: project.name,
+          email: inviteEmail.trim(),
+          role: inviteRole,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setMembers((prev) => [...prev, data.member]);
+      setInviteEmail("");
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInviting(false);
+    }
+  };
+
+  const handleGitSync = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!gitRepo.trim() || !gitToken.trim()) return;
+    setGitSyncing(true);
+    setGitError(null);
+    setGitResult(null);
+    try {
+      const res = await fetch("/api/backend/git-sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          localProjectId: project.id,
+          projectName: project.name,
+          repo: gitRepo.trim(),
+          accessToken: gitToken.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setGitResult(data);
+      setGitToken("");
+    } catch (err) {
+      setGitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGitSyncing(false);
+    }
   };
 
   return (
@@ -167,6 +270,46 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
         </div>
       )}
 
+      {tab === "개요" && (
+        <Card>
+          <div className="row-between">
+            <h3 style={{ margin: 0 }}>팀원 {membersLoading ? "" : `(${members.length}명)`}</h3>
+          </div>
+          <p className="field-hint" style={{ marginTop: -6 }}>
+            초대하려는 사람이 백엔드에 먼저 회원가입돼 있어야 합니다.
+          </p>
+          <div className="stack" style={{ marginTop: 8 }}>
+            {members.map((m) => (
+              <div key={m.id} className="row-between">
+                <span style={{ fontSize: 13 }}>
+                  <strong>{m.userName}</strong> <span className="muted">{m.userEmail}</span>
+                </span>
+                <Badge tone="neutral">{ROLE_LABEL[m.role] ?? m.role}</Badge>
+              </div>
+            ))}
+          </div>
+          <form onSubmit={handleInvite} className="row" style={{ marginTop: 12 }}>
+            <input
+              type="email"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="초대할 사람 이메일"
+              style={{ flex: 1 }}
+              disabled={inviting}
+            />
+            <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} disabled={inviting}>
+              <option value="ANSWERER">답변 작성자</option>
+              <option value="QUESTIONER">질문 참여자</option>
+              <option value="TEAM_MANAGER">팀 매니저</option>
+            </select>
+            <button type="submit" className="btn btn-sm btn-primary" disabled={inviting || !inviteEmail.trim()}>
+              {inviting ? "초대 중…" : "초대"}
+            </button>
+          </form>
+          {inviteError && <p style={{ color: "var(--tone-danger-fg)", marginTop: 6 }}>{inviteError}</p>}
+        </Card>
+      )}
+
       {tab === "회의" && (
         <section>
           <div className="section-header">
@@ -218,7 +361,11 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
               <button className="source-option" disabled title="이번 스코프에서는 제외 (추후 지원 예정)">
                 📓 Notion
               </button>
-              <button className="source-option" disabled title="이번 스코프에서는 제외 (추후 지원 예정)">
+              <button
+                type="button"
+                className={`source-option ${showGitForm ? "active" : ""}`}
+                onClick={() => setShowGitForm((v) => !v)}
+              >
                 🔗 Git / GitHub
               </button>
               <button
@@ -229,6 +376,49 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                 📤 MD 붙여넣기
               </button>
             </div>
+
+            {showGitForm && (
+              <form onSubmit={handleGitSync} style={{ marginTop: 16 }}>
+                <div className="field">
+                  <label htmlFor="git-repo">저장소 (owner/repo)</label>
+                  <input
+                    id="git-repo"
+                    type="text"
+                    value={gitRepo}
+                    onChange={(e) => setGitRepo(e.target.value)}
+                    placeholder="예: LL-MAiTE/MAiTE-FE"
+                    disabled={gitSyncing}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="git-token">GitHub Personal Access Token</label>
+                  <input
+                    id="git-token"
+                    type="password"
+                    value={gitToken}
+                    onChange={(e) => setGitToken(e.target.value)}
+                    placeholder="repo 읽기 권한이 있는 토큰"
+                    disabled={gitSyncing}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={gitSyncing || !gitRepo.trim() || !gitToken.trim()}
+                >
+                  {gitSyncing ? "동기화 중…" : "연동하고 동기화"}
+                </button>
+                {gitError && <p style={{ color: "var(--tone-danger-fg)", marginTop: 8 }}>{gitError}</p>}
+                {gitResult && (
+                  <p className="field-hint" style={{ marginTop: 8 }}>
+                    {gitResult.syncedCount}개 파일 동기화됨: {gitResult.latestFiles.join(", ")}
+                    <br />
+                    (백엔드 DB에 저장됨 — 이 화면 문서 목록엔 아직 자동으로 합쳐지지 않습니다.
+                    백엔드에 문서 단건 조회 API가 추가되면 연결할 예정입니다.)
+                  </p>
+                )}
+              </form>
+            )}
 
             {showUpload && (
               <form onSubmit={handleUpload}>

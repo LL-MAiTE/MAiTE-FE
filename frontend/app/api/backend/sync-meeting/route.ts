@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  createBackendProject,
+  ensureBackendProjectId,
   createBackendAgenda,
   addAndApproveBackendPosition,
   createBackendMeeting,
 } from "@/lib/backendApi";
-import {
-  getBackendLink,
-  saveBackendLink,
-  getBackendProjectId,
-  saveBackendProjectId,
-} from "@/lib/backendMeetingLinkStore";
+import { getBackendLink, saveBackendLink } from "@/lib/backendMeetingLinkStore";
 
 export const runtime = "nodejs";
 
@@ -60,12 +55,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // 프로젝트도 로컬 mock이라 백엔드에 대응 레코드가 없다 — 없으면 먼저 만들고 링크 저장.
-    let backendProjectId = getBackendProjectId(body.projectId);
-    if (!backendProjectId) {
-      const project = await createBackendProject(body.projectName);
-      backendProjectId = project.id;
-      saveBackendProjectId(body.projectId, backendProjectId);
-    }
+    const backendProjectId = await ensureBackendProjectId(body.projectId, body.projectName);
 
     const agenda = await createBackendAgenda({
       projectId: backendProjectId,
