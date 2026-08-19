@@ -160,6 +160,25 @@ export async function endBackendMeeting(meetingId: string): Promise<void> {
   await backendFetch<{ success: boolean }>(`/meetings/${meetingId}/end`, { method: "POST" });
 }
 
+export interface BackendTranscript {
+  id: string;
+  meetingId: string;
+  speakerLabel: string; // "USER" | "AI_AGENT" (백엔드가 Agora 콜백으로 저장한 원문)
+  language: string;
+  text: string;
+  spokenAt: string;
+  confidence: number | null;
+}
+
+/**
+ * 백엔드가 Agora message_subscriber 콜백(/agora/callback → saveConversationTurn)으로
+ * 실시간 저장해둔 원문 대화(양쪽 발화)를 가져온다. 라이브 화면이 3초 간격으로 폴링해서
+ * "실시간 대화" 패널에 실제 음성 협상 내용을 보여주는 데 쓴다.
+ */
+export async function getBackendTranscripts(meetingId: string): Promise<BackendTranscript[]> {
+  return backendFetch<BackendTranscript[]>(`/meetings/${meetingId}/transcripts`);
+}
+
 // ---------------------------------------------------------------------------
 // 알림
 // ---------------------------------------------------------------------------

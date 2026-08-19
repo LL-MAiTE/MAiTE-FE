@@ -96,6 +96,11 @@ export default function LiveMeetingPage({
   const [backendError, setBackendError] = useState<string | null>(null);
   const [backendMeetingId, setBackendMeetingId] = useState<string | null>(null);
 
+  // 백엔드가 Agora 콜백으로 실시간 저장하는 실제 대화(양쪽 발화 원문)를 폴링해서 보여준다.
+  // 백엔드 미팅이 붙어있는 동안은 이게 진짜 대화이므로, 로컬 mock 텍스트 시뮬레이션
+  // (meeting.transcript, 아래 "질문하기" 폼)보다 우선해서 보여준다.
+  const [liveTranscript, setLiveTranscript] = useState<TranscriptEntry[]>([]);
+
   // 상단 통화 타이머(장식용) — 백엔드 회의가 "실행중"이 된 시점부터 초 단위로 센다.
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -131,6 +136,41 @@ export default function LiveMeetingPage({
     return () => clearInterval(interval);
   }, [backendStatus]);
 
+  // 백엔드 미팅이 실행 중인 동안 3초 간격으로 실제 대화 원문을 폴링. speakerLabel
+  // "USER"/"AI_AGENT"를 화면 표시용 Speaker("counterpart"/"ai")로 변환한다.
+  useEffect(() => {
+    if (backendStatus !== "실행중" || !backendMeetingId) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/backend/meeting-transcripts?backendMeetingId=${backendMeetingId}`);
+        const data = await res.json();
+        if (cancelled || !res.ok || !Array.isArray(data.transcripts)) return;
+        setLiveTranscript(
+          data.transcripts.map((t: { id: string; speakerLabel: string; text: string; spokenAt: string }) => ({
+            id: t.id,
+            speaker: t.speakerLabel === "AI_AGENT" ? "ai" : "counterpart",
+            speakerLabel: t.speakerLabel === "AI_AGENT" ? "AI 협상 대리인" : counterpartLabel,
+            timestamp: new Date(t.spokenAt).toLocaleTimeString("ko-KR", { hour12: false }),
+            text: t.text,
+            translatedText: null,
+          }))
+        );
+      } catch {
+        // 폴링 실패는 조용히 무시하고 다음 tick에서 재시도 — 통화 자체를 끊지 않는다.
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendStatus, backendMeetingId]);
+
   // 기능6: 숫자확인 팝업 10초 카운트다운. 1초마다 감소시키고 0이 되면 자동 보류(미응답).
   useEffect(() => {
     if (!meeting) return;
@@ -161,6 +201,9 @@ export default function LiveMeetingPage({
 
   const counterpartLabel =
     meeting.transcript.find((t) => t.speaker === "counterpart")?.speakerLabel ?? "상대방";
+  // 백엔드 미팅이 붙어있으면 그게 진짜 통화니까 폴링해온 실시간 대화를 보여주고,
+  // 아니면(백엔드 연결 전/데모) 기존처럼 로컬 mock 텍스트 시뮬레이션을 보여준다.
+  const displayTranscript = backendMeetingId ? liveTranscript : meeting.transcript;
   const counterpartInitial = counterpartLabel.trim().slice(0, 1) || "상";
   const aiTileActive = backendStatus === "실행중";
   const counterpartTileActive = voiceStatus === "연결됨" && remoteParticipants.length > 0;
@@ -383,10 +426,12 @@ export default function LiveMeetingPage({
               <span className="live-online-dot" />
             </div>
             <div className="live-transcript-scroll">
-              {meeting.transcript.length === 0 ? (
-                <p className="live-transcript-empty">아직 대화가 없습니다.</p>
+              {displayTranscript.length === 0 ? (
+                <p className="live-transcript-empty">
+                  {backendMeetingId ? "아직 대화가 없습니다." : "아직 대화가 없습니다. 아래에서 질문을 시뮬레이션해보세요."}
+                </p>
               ) : (
-                meeting.transcript.map((entry) => (
+                displayTranscript.map((entry) => (
                   <LiveTranscriptRow
                     key={entry.id}
                     entry={entry}
@@ -397,19 +442,25 @@ export default function LiveMeetingPage({
                 ))
               )}
             </div>
-            <form onSubmit={handleAsk} className="live-ask-form">
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="상대방 질문 시뮬레이션 (실제로는 실시간 STT 결과가 여기로 들어옵니다)"
-                className="live-ask-input"
-                disabled={asking}
-              />
-              <button type="submit" className="btn btn-primary btn-sm" disabled={asking}>
-                {asking ? "AI 판단 중…" : "전송"}
-              </button>
-            </form>
+            {backendMeetingId ? (
+              <p className="live-transcript-empty" style={{ padding: "8px 16px" }}>
+                🎙️ 실제 음성 대화가 실시간으로 표시됩니다 (3초 간격 갱신)
+              </p>
+            ) : (
+              <form onSubmit={handleAsk} className="live-ask-form">
+                <input
+                  type="text"
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  placeholder="상대방 질문 시뮬레이션 (백엔드 연결 전 데모용 — 실제 통화 중엔 위 실시간 대화로 대체됩니다)"
+                  className="live-ask-input"
+                  disabled={asking}
+                />
+                <button type="submit" className="btn btn-primary btn-sm" disabled={asking}>
+                  {asking ? "AI 판단 중…" : "전송"}
+                </button>
+              </form>
+            )}
           </div>
         </div>
 
