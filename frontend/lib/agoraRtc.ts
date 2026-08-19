@@ -20,6 +20,10 @@ export type AgoraConnectionStatus = "연결안됨" | "연결중" | "연결됨" |
 export interface RemoteParticipant {
   uid: string | number;
   hasAudio: boolean;
+  hasVideo: boolean;
+  /** 비디오가 있을 때만 채워짐(아바타). 렌더링하는 쪽에서 track.play(domElement)로 붙인다. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  videoTrack?: any;
 }
 
 export interface AgoraSessionHandlers {
@@ -91,19 +95,43 @@ export class AgoraVoiceSession {
         // eslint-disable-next-line no-console
         console.log(`[Agora] user-published 이벤트 — 상대 uid=${user.uid}, mediaType=${mediaType}`);
         await this.client.subscribe(user, mediaType);
+
+        const existing = this.remoteParticipants.get(user.uid);
         if (mediaType === "audio") {
           user.audioTrack?.play();
           // eslint-disable-next-line no-console
           console.log(`[Agora] 상대(uid=${user.uid}) 오디오 재생 시작`);
+          this.remoteParticipants.set(user.uid, {
+            uid: user.uid,
+            hasAudio: true,
+            hasVideo: existing?.hasVideo ?? false,
+            videoTrack: existing?.videoTrack,
+          });
+        } else {
+          // 비디오는 여기서 play()하지 않는다 — 실제로 붙일 DOM 엘리먼트를 UI 쪽이
+          // 갖고 있으니, videoTrack을 그대로 넘겨서 컴포넌트가 자기 <div>에 붙이게 한다.
+          // eslint-disable-next-line no-console
+          console.log(`[Agora] 상대(uid=${user.uid}) 비디오 트랙 수신 (아바타로 추정)`);
+          this.remoteParticipants.set(user.uid, {
+            uid: user.uid,
+            hasAudio: existing?.hasAudio ?? false,
+            hasVideo: true,
+            videoTrack: user.videoTrack,
+          });
         }
-        this.remoteParticipants.set(user.uid, { uid: user.uid, hasAudio: mediaType === "audio" });
         this.emitRemote();
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.client.on("user-unpublished", (user: any) => {
+      this.client.on("user-unpublished", (user: any, mediaType: "audio" | "video") => {
         // eslint-disable-next-line no-console
-        console.log(`[Agora] user-unpublished 이벤트 — 상대 uid=${user.uid}`);
-        this.remoteParticipants.delete(user.uid);
+        console.log(`[Agora] user-unpublished 이벤트 — 상대 uid=${user.uid}, mediaType=${mediaType}`);
+        const existing = this.remoteParticipants.get(user.uid);
+        if (!existing) return;
+        if (mediaType === "video") {
+          this.remoteParticipants.set(user.uid, { ...existing, hasVideo: false, videoTrack: undefined });
+        } else {
+          this.remoteParticipants.set(user.uid, { ...existing, hasAudio: false });
+        }
         this.emitRemote();
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -4,17 +4,63 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { EmptyState, Card } from "@/components/Card";
-import { HoldStatusBadge, MeetingStatusBadge, Badge } from "@/components/Badge";
+import { HoldStatusBadge, MeetingStatusBadge } from "@/components/Badge";
 import { evaluateAlternativeMock } from "@/lib/mockAi";
 import { AgoraConnectionStatus, AgoraVoiceSession, RemoteParticipant } from "@/lib/agoraRtc";
+import type { MatchResult, Speaker, TranscriptEntry } from "@/lib/types";
 
-const VOICE_STATUS_TONE: Record<AgoraConnectionStatus, "neutral" | "warning" | "success" | "danger"> = {
+const VOICE_STATUS_DOT: Record<AgoraConnectionStatus, "neutral" | "warn" | "success" | "danger"> = {
   연결안됨: "neutral",
-  연결중: "warning",
+  연결중: "warn",
   연결됨: "success",
   오류: "danger",
 };
 
+/**
+ * 라이브 미팅 화면. Figma "회의진행중"(섹션 22:19995 → 메인 프레임 22:3 → Body 22:1512 →
+ * LiveMeeting 22:1515) 노드를 기반으로 만들었다. 앱 전체는 라이트 톤 MAiTE 디자인
+ * 시스템을 쓰지만, 이 화면(통화 UI)만은 Figma 원본처럼 의도적으로 다크 톤 크롬을
+ * 그대로 재현했다 — 화상/음성 회의 화면이 앱 전체 톤과 다르게 어두운 것은 흔한 패턴이고,
+ * 원본 디자인도 그렇게 되어 있다. 실제 배치에 쓴 하위 노드:
+ *  - 상단 바(22:1516): 나가기 버튼, LIVE 배지, 제목/부제, 경과 시간 타이머, 안건·보류
+ *    카운트 배지
+ *  - 참가자 타일 2개(22:1644 상대방, 22:1692 AI)
+ *  - 실시간 대화 패널(22:1882~22:1894, 메시지 행 패턴은 22:1895/22:1906 등에서 반복 확인)
+ *  - 하단 컨트롤 바(22:2046): 음소거/카메라 끄기/링크/종료 버튼 + 우측 상태 배지
+ *
+ * 기존 기능은 전부 그대로 유지했다 (백엔드 동기화·시작·종료, Agora 음성 연결, 음소거,
+ * 10초 숫자확인 카운트다운/자동보류, 전사 매칭 결과, 승인 범위 내 대안 조율 평가,
+ * 보류함) — 이번 작업은 재스킨/리플로우이지 로직 재작성이 아니다.
+ *
+ * Figma 원본과 다르게 처리했거나 생략한 부분:
+ *  - 상단 "나가기" 버튼 뒤에 있던 확인 팝업(회의 나가기, 22:9999 — "AI가 계속 대리
+ *    진행합니다" 안내)은 구현하지 않고, 회의 상세 화면으로 바로 이동하는 링크로
+ *    단순화했다.
+ *  - "최소화" 버튼과 "AI 대리진행 화면 최소화"(22:12498) 상태는 이 앱에 대응하는
+ *    최소화 기능이 없어 생략했다.
+ *  - 하단 컨트롤바의 "끄기"(카메라)와 "링크"(초대 링크) 버튼은 이 앱이 음성 전용이고
+ *    초대 링크 기능도 없어 생략했다. "음소거"/"종료"만 기존 handleToggleMute /
+ *    handleStopBackendMeeting에 그대로 연결했다.
+ *  - 참가자 타일의 파형(waveform)은 실제 오디오 레벨 데이터가 없어 장식용 CSS
+ *    바 그래프다 (연결 여부에 따라 활성/유휴로만 표시하고, 실제 진폭을 반영하지 않음).
+ *  - 상단 타이머는 Figma에서 "00:06" 형태로 계속 올라가는데, 백엔드가 실제 회의
+ *    시작 시각을 내려주지 않아서 프론트에서 "백엔드 실행중" 상태가 된 시점부터
+ *    센 경과 시간으로 근사했다.
+ *  - Figma의 실시간 대화 패널은 상대방/AI 발화를 좌우로 나누지 않고 아바타·색상
+ *    으로만 구분한 세로 피드였다 — 기존 코드의 좌/우 말풍선 정렬 대신 이 방식을
+ *    그대로 따랐다.
+ *  - 메시지별 상태 태그(🔢 숫자 확인 / ✅ 확인됨 / ❌ 거부됨 / ⏱ 미응답 / ⏸ 보류 /
+ *    ⚠ 제한 전달)는 Figma 실시간 대화 패널에 있던 배지 패턴을 그대로 옮기되, 그
+ *    아래엔 실제 사유·근거·10초 O/X 확인 버튼 등 기존 로직을 전부 유지했다.
+ *  - "승인 범위 내 대안 조율"과 "보류함"은 Figma "회의진행중" 화면 자체에는 대응
+ *    UI가 없어서, 다크 콜 프레임 아래에 기존 라이트 톤 카드 그대로 이어붙였다.
+ *
+ * LiveAvatar(HeyGen) 연동: 백엔드가 Agora join 요청에 avatar 블록을 넣어두면(설정
+ * 안 하면 기존처럼 음성 전용), 아바타가 별도 RTC 참가자(uid 9998)로 join해서 비디오를
+ * 퍼블리시한다. 프론트는 그냥 agoraRtc.ts가 넘겨주는 비디오 트랙이 있으면 AI 타일의
+ * ✨ 원형 아이콘 대신 그 영상을 꽉 채워 보여주고, 없으면(아바타 미설정 시) 기존 그대로
+ * 아이콘+파형만 보인다 — 프론트 쪽은 아바타 유무를 신경 안 써도 되게 만들었다.
+ */
 export default function LiveMeetingPage({
   params,
 }: {
@@ -50,11 +96,40 @@ export default function LiveMeetingPage({
   const [backendError, setBackendError] = useState<string | null>(null);
   const [backendMeetingId, setBackendMeetingId] = useState<string | null>(null);
 
+  // 상단 통화 타이머(장식용) — 백엔드 회의가 "실행중"이 된 시점부터 초 단위로 센다.
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  // AI 참가자 타일 안에 아바타(LiveAvatar) 비디오를 붙일 DOM. 백엔드에 LiveAvatar
+  // 설정이 안 돼있으면 비디오 트랙 자체가 안 와서, 기존처럼 ✨ 아이콘만 보인다.
+  const aiVideoRef = useRef<HTMLDivElement | null>(null);
+  const avatarParticipant = remoteParticipants.find((p) => p.hasVideo && p.videoTrack);
+
+  useEffect(() => {
+    if (!avatarParticipant?.videoTrack || !aiVideoRef.current) return;
+    avatarParticipant.videoTrack.play(aiVideoRef.current);
+    return () => {
+      try {
+        avatarParticipant.videoTrack.stop();
+      } catch {
+        // ignore
+      }
+    };
+  }, [avatarParticipant?.videoTrack]);
+
   useEffect(() => {
     return () => {
       voiceSessionRef.current?.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    if (backendStatus !== "실행중") {
+      setElapsedSeconds(0);
+      return;
+    }
+    const interval = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, [backendStatus]);
 
   // 기능6: 숫자확인 팝업 10초 카운트다운. 1초마다 감소시키고 0이 되면 자동 보류(미응답).
   useEffect(() => {
@@ -83,6 +158,12 @@ export default function LiveMeetingPage({
   const approvedPositions = meeting.positions.filter(
     (p) => p.approvalStatus === "승인" || p.approvalStatus === "수정후승인"
   );
+
+  const counterpartLabel =
+    meeting.transcript.find((t) => t.speaker === "counterpart")?.speakerLabel ?? "상대방";
+  const counterpartInitial = counterpartLabel.trim().slice(0, 1) || "상";
+  const aiTileActive = backendStatus === "실행중";
+  const counterpartTileActive = voiceStatus === "연결됨" && remoteParticipants.length > 0;
 
   const handleAsk = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -223,44 +304,150 @@ export default function LiveMeetingPage({
         )}
       </div>
 
-      <Card>
-        <div className="row-between">
-          <div>
-            <div className="row">
-              <strong>실시간 음성 미팅 (백엔드 연동)</strong>
-              <Badge tone={VOICE_STATUS_TONE[voiceStatus]}>{voiceStatus}</Badge>
-              <Badge
-                tone={
-                  backendStatus === "실행중" ? "success" : backendStatus === "오류" ? "danger" : "neutral"
-                }
-              >
-                백엔드 {backendStatus}
-              </Badge>
-              {remoteParticipants.length > 0 && (
-                <span className="muted">참가자 {remoteParticipants.length}명 연결됨</span>
+      <div className="live-call-shell">
+        <div className="live-call-header">
+          <div className="live-call-header-left">
+            <Link href={`/projects/${project.id}/meetings/${meeting.id}`} className="live-call-exit-btn">
+              <img src="/icons/icon-arrow-left.svg" alt="" width={11} height={11} />
+              나가기
+            </Link>
+            <span className="live-badge-live">
+              <span className="live-badge-live-dot" />
+              LIVE
+            </span>
+            <div>
+              <p className="live-call-title">{meeting.title}</p>
+              <p className="live-call-subtitle">
+                {meeting.purpose} · {counterpartLabel} (상대방)
+              </p>
+            </div>
+          </div>
+
+          <div className="live-call-timer">
+            <span className="live-call-timer-dot" />
+            {formatElapsed(elapsedSeconds)}
+          </div>
+
+          <div className="live-call-header-right">
+            {meeting.holdItems.length > 0 && (
+              <span className="live-header-pill hold">
+                <img src="/icons/icon-shield-check.svg" alt="" width={10} height={10} />
+                보류 {meeting.holdItems.length}건
+              </span>
+            )}
+            <span className="live-header-pill">
+              <img src="/icons/icon-sparkle.svg" alt="" width={12} height={12} />
+              안건 {approvedPositions.length}개 승인됨
+            </span>
+          </div>
+        </div>
+
+        <div className="live-call-body">
+          <div className="live-video-col">
+            <div className="live-participant-tile counterpart">
+              <div className="live-participant-avatar counterpart">{counterpartInitial}</div>
+              <div>
+                <p className="live-participant-name">{counterpartLabel}</p>
+                <p className="live-participant-meta">상대방 · {meeting.counterpartInfo}</p>
+              </div>
+              <LiveWaveform active={counterpartTileActive} tone="blue" />
+            </div>
+
+            <div className={`live-participant-tile ai ${avatarParticipant ? "has-video" : ""}`}>
+              {avatarParticipant ? (
+                <div ref={aiVideoRef} className="live-avatar-video" />
+              ) : (
+                <div className="live-participant-avatar ai">
+                  ✨
+                  <span className={`live-participant-status-dot ${aiTileActive ? "on" : ""}`}>
+                    <span />
+                  </span>
+                </div>
+              )}
+              <div>
+                <p className="live-participant-name">AI</p>
+                <p className="live-participant-meta">MAiTE 대리 진행</p>
+              </div>
+              {!avatarParticipant && <LiveWaveform active={aiTileActive} tone="purple" />}
+              <span className="live-participant-tag">
+                <img src="/icons/icon-shield-check.svg" alt="" width={9} height={9} />
+                {aiTileActive ? "사전 승인 범위 내 대리 진행 중" : "회의 시작 대기 중"}
+              </span>
+            </div>
+          </div>
+
+          <div className="live-transcript-panel">
+            <div className="live-transcript-panel-header">
+              <img src="/icons/icon-speaker-wave.svg" alt="" width={12} height={12} />
+              <strong>실시간 대화</strong>
+              <span className="live-online-dot" />
+            </div>
+            <div className="live-transcript-scroll">
+              {meeting.transcript.length === 0 ? (
+                <p className="live-transcript-empty">아직 대화가 없습니다.</p>
+              ) : (
+                meeting.transcript.map((entry) => (
+                  <LiveTranscriptRow
+                    key={entry.id}
+                    entry={entry}
+                    onResolveNumberConfirmation={(decision) =>
+                      resolveNumberConfirmation(meeting.id, entry.id, decision)
+                    }
+                  />
+                ))
               )}
             </div>
-            <p className="muted" style={{ marginTop: 4 }}>
-              백엔드가 이 회의의 승인 안건으로 Agora Conversational AI Agent를 채널에 join시키고,
-              그 채널·토큰으로 여기(사람 참여자)도 함께 join합니다. 마이크 권한이 필요합니다.
-              대화 내용은 백엔드 DB(transcript/보류함/사후검토)에 실제로 쌓입니다.
-            </p>
-            {voiceError && <p style={{ color: "var(--tone-danger-fg)" }}>{voiceError}</p>}
-            {backendError && <p style={{ color: "var(--tone-danger-fg)" }}>{backendError}</p>}
+            <form onSubmit={handleAsk} className="live-ask-form">
+              <input
+                type="text"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="상대방 질문 시뮬레이션 (실제로는 실시간 STT 결과가 여기로 들어옵니다)"
+                className="live-ask-input"
+                disabled={asking}
+              />
+              <button type="submit" className="btn btn-primary btn-sm" disabled={asking}>
+                {asking ? "AI 판단 중…" : "전송"}
+              </button>
+            </form>
           </div>
-          <div className="row">
-            {backendStatus === "실행중" ? (
-              <>
-                <button className="btn btn-sm" onClick={handleToggleMute}>
-                  {muted ? "음소거 해제" : "음소거"}
+        </div>
+
+        <div className="live-call-controls">
+          {backendStatus === "실행중" ? (
+            <>
+              <div className="live-control-btn-group">
+                <button type="button" className="live-control-btn" onClick={handleToggleMute}>
+                  <span className={`live-control-btn-icon ${muted ? "active" : ""}`}>
+                    <img src="/icons/icon-mic.svg" alt="" width={18} height={18} />
+                  </span>
+                  <span className="live-control-label">{muted ? "음소거 해제" : "음소거"}</span>
                 </button>
-                <button className="btn btn-sm btn-danger" onClick={handleStopBackendMeeting}>
-                  미팅 종료
+                <button type="button" className="live-control-btn" onClick={handleStopBackendMeeting}>
+                  <span className="live-control-btn-icon danger">
+                    <img src="/icons/icon-phone-end.svg" alt="" width={18} height={18} />
+                  </span>
+                  <span className="live-control-label">종료</span>
                 </button>
-              </>
-            ) : (
+              </div>
+              <div className="live-control-status">
+                <span className="live-status-pill">
+                  <span className={`live-status-dot ${VOICE_STATUS_DOT[voiceStatus]}`} />
+                  음성 {voiceStatus}
+                </span>
+                {remoteParticipants.length > 0 && (
+                  <span className="live-status-pill">참가자 {remoteParticipants.length}명 연결됨</span>
+                )}
+                <span className="live-status-pill">
+                  AI 대리 진행 중 — <strong>승인 범위 내</strong>
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
               <button
-                className="btn btn-sm btn-primary"
+                type="button"
+                className="btn btn-primary"
                 onClick={handleStartBackendMeeting}
                 disabled={backendStatus === "동기화중" || backendStatus === "시작중"}
               >
@@ -270,110 +457,28 @@ export default function LiveMeetingPage({
                     ? "AI 진행자 참여시키는 중…"
                     : "미팅 시작"}
               </button>
-            )}
-          </div>
+              <div className="live-control-status">
+                <span className="live-status-pill">
+                  <span
+                    className={`live-status-dot ${backendStatus === "오류" ? "danger" : "neutral"}`}
+                  />
+                  백엔드 {backendStatus}
+                </span>
+              </div>
+            </>
+          )}
         </div>
-      </Card>
+
+        {(voiceError || backendError) && (
+          <div className="live-call-errors">
+            {voiceError && <p className="live-error-text">{voiceError}</p>}
+            {backendError && <p className="live-error-text">{backendError}</p>}
+          </div>
+        )}
+      </div>
 
       <div className="two-col">
         <div>
-          <section className="section">
-            <h2>실시간 전사 · 통역 전달</h2>
-            <Card>
-              <div className="transcript-list">
-                {meeting.transcript.map((entry) => (
-                  <div key={entry.id} className={`transcript-entry from-${entry.speaker}`}>
-                    <div className="transcript-bubble">
-                      {entry.text}
-                      {entry.translatedText && (
-                        <div className="transcript-translated">{entry.translatedText}</div>
-                      )}
-                    </div>
-                    <div className="transcript-meta">
-                      {entry.speakerLabel} · {entry.timestamp}
-                    </div>
-
-                    {entry.matchResult && (
-                      <div
-                        className={`match-panel ${entry.matchResult.matched ? "matched" : "held"}`}
-                        style={{ alignSelf: entry.speaker === "counterpart" ? "flex-start" : "flex-end" }}
-                      >
-                        {entry.matchResult.matched ? (
-                          <>
-                            ✅ 매칭됨 — 안건 <strong>{entry.matchResult.matchedTopic}</strong>
-                            <div className="muted" style={{ marginTop: 2 }}>
-                              {entry.matchResult.intentMatchReasoning}
-                            </div>
-                            {entry.matchResult.limitationNote && (
-                              <div className="muted" style={{ marginTop: 2 }}>
-                                제한사항: {entry.matchResult.limitationNote}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            ⏸ 보류됨
-                            <div className="muted" style={{ marginTop: 2 }}>
-                              {entry.matchResult.holdReason}
-                            </div>
-                          </>
-                        )}
-
-                        {entry.matchResult.numberConfirmation && (
-                          <div className="number-confirm-box">
-                            {entry.matchResult.numberConfirmation.status === "대기중" && (
-                              <>
-                                🔢 핵심 수치 포함 — 상대방 확인 대기 중 (
-                                {entry.matchResult.numberConfirmation.secondsLeft}초)
-                                <div className="number-confirm-actions">
-                                  <button
-                                    className="btn btn-sm btn-primary"
-                                    onClick={() =>
-                                      resolveNumberConfirmation(meeting.id, entry.id, "확인됨")
-                                    }
-                                  >
-                                    O 확인
-                                  </button>
-                                  <button
-                                    className="btn btn-sm btn-danger"
-                                    onClick={() =>
-                                      resolveNumberConfirmation(meeting.id, entry.id, "거부됨")
-                                    }
-                                  >
-                                    X 거부
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                            {entry.matchResult.numberConfirmation.status === "확인됨" && "✅ 전달 확정됨"}
-                            {entry.matchResult.numberConfirmation.status === "거부됨" &&
-                              "❌ 거부됨 — 자동 보류 처리됨"}
-                            {entry.matchResult.numberConfirmation.status === "미응답" &&
-                              "⏱ 10초 미응답 — 자동 보류 처리됨 (자동 승인 아님)"}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <form onSubmit={handleAsk} className="row" style={{ marginTop: 12 }}>
-              <input
-                type="text"
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="상대방 질문 시뮬레이션 (실제로는 실시간 STT 결과가 여기로 들어옵니다)"
-                style={{ flex: 1 }}
-                disabled={asking}
-              />
-              <button type="submit" className="btn btn-primary" disabled={asking}>
-                {asking ? "AI 판단 중…" : "질문 전송"}
-              </button>
-            </form>
-          </section>
-
           <section className="section">
             <h2>승인 범위 내 대안 조율</h2>
             <Card>
@@ -415,7 +520,9 @@ export default function LiveMeetingPage({
                         <span>
                           [{p.topic}] {p.text}
                         </span>
-                        <span className={`badge badge-${p.withinRange === null ? "neutral" : p.withinRange ? "success" : "danger"}`}>
+                        <span
+                          className={`badge badge-${p.withinRange === null ? "neutral" : p.withinRange ? "success" : "danger"}`}
+                        >
                           {p.withinRange === null ? "판단 보류" : p.withinRange ? "조율 가능" : "조율 불가"}
                         </span>
                       </div>
@@ -451,6 +558,128 @@ export default function LiveMeetingPage({
           </section>
         </aside>
       </div>
+    </div>
+  );
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const s = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+/** 참가자 타일 안의 장식용 파형 — 실제 오디오 레벨이 아니라 연결 여부만 반영한다. */
+function LiveWaveform({ active, tone }: { active: boolean; tone: "blue" | "purple" }) {
+  // 고정된 높이 패턴을 써서 리렌더마다 파형이 흔들리지 않게 한다.
+  const heights = [10, 22, 28, 18, 12, 20, 26, 16, 24, 14, 20, 27, 15, 11, 23];
+  return (
+    <div className={`live-waveform ${active ? "" : "idle"}`}>
+      {heights.map((h, i) => (
+        <span
+          key={i}
+          className={`live-waveform-bar ${tone === "purple" ? "purple" : ""}`}
+          style={{ height: `${h}px` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function speakerAvatarClass(speaker: Speaker): string {
+  if (speaker === "ai") return "ai";
+  if (speaker === "host") return "host";
+  return "";
+}
+
+function speakerAvatarLabel(speaker: Speaker, speakerLabel: string): string {
+  if (speaker === "ai") return "✨";
+  return speakerLabel.trim().slice(0, 1) || "A";
+}
+
+function statusTagFor(matchResult?: MatchResult): { label: string; tone: string } | null {
+  if (!matchResult) return null;
+  if (matchResult.numberConfirmation) {
+    switch (matchResult.numberConfirmation.status) {
+      case "대기중":
+        return { label: "🔢 숫자 확인", tone: "warn" };
+      case "확인됨":
+        return { label: "✅ 확인됨", tone: "success" };
+      case "거부됨":
+        return { label: "❌ 거부됨", tone: "danger" };
+      case "미응답":
+        return { label: "⏱ 미응답", tone: "danger" };
+    }
+  }
+  if (matchResult.limitationNote) {
+    return { label: "⚠ 제한 전달", tone: "warn" };
+  }
+  if (matchResult.matched) {
+    return { label: "✅ 매칭됨", tone: "success" };
+  }
+  return { label: "⏸ 보류", tone: "warn" };
+}
+
+/** 실시간 대화 패널의 메시지 한 행. Figma 22:1895/22:1906 등 반복 패턴을 기반으로 만들었다. */
+function LiveTranscriptRow({
+  entry,
+  onResolveNumberConfirmation,
+}: {
+  entry: TranscriptEntry;
+  onResolveNumberConfirmation: (decision: "확인됨" | "거부됨") => void;
+}) {
+  const tag = statusTagFor(entry.matchResult);
+  const nc = entry.matchResult?.numberConfirmation;
+
+  return (
+    <div className={`live-transcript-row ${entry.speaker !== "counterpart" ? "ai" : ""}`}>
+      <div className="live-transcript-row-header">
+        <div className="live-transcript-speaker">
+          <span className={`live-transcript-avatar ${speakerAvatarClass(entry.speaker)}`}>
+            {speakerAvatarLabel(entry.speaker, entry.speakerLabel)}
+          </span>
+          <span className={`live-transcript-speaker-name ${speakerAvatarClass(entry.speaker)}`}>
+            {entry.speakerLabel}
+            {entry.speaker === "counterpart" ? " (상대방)" : ""}
+          </span>
+        </div>
+        {tag && <span className={`live-transcript-status-tag ${tag.tone}`}>{tag.label}</span>}
+      </div>
+
+      <p className="live-transcript-text">{entry.text}</p>
+      {entry.translatedText && <p className="live-transcript-translated">{entry.translatedText}</p>}
+
+      {entry.matchResult && !entry.matchResult.matched && entry.matchResult.holdReason && (
+        <p className="live-transcript-note">{entry.matchResult.holdReason}</p>
+      )}
+      {entry.matchResult?.limitationNote && (
+        <p className="live-transcript-note">제한사항: {entry.matchResult.limitationNote}</p>
+      )}
+      {entry.matchResult?.matched && entry.matchResult.intentMatchReasoning && (
+        <p className="live-transcript-note">{entry.matchResult.intentMatchReasoning}</p>
+      )}
+
+      {nc && (
+        <div className={`live-transcript-number-confirm ${nc.status === "대기중" ? "" : "resolved"}`}>
+          {nc.status === "대기중" && (
+            <>
+              🔢 핵심 수치 포함 — 상대방 확인 대기 중 ({nc.secondsLeft}초)
+              <div className="live-transcript-number-confirm-actions">
+                <button className="btn btn-sm btn-primary" onClick={() => onResolveNumberConfirmation("확인됨")}>
+                  O 확인
+                </button>
+                <button className="btn btn-sm btn-danger" onClick={() => onResolveNumberConfirmation("거부됨")}>
+                  X 거부
+                </button>
+              </div>
+            </>
+          )}
+          {nc.status === "확인됨" && "✅ 전달 확정됨"}
+          {nc.status === "거부됨" && "❌ 거부됨 — 자동 보류 처리됨"}
+          {nc.status === "미응답" && "⏱ 10초 미응답 — 자동 보류 처리됨 (자동 승인 아님)"}
+        </div>
+      )}
     </div>
   );
 }
