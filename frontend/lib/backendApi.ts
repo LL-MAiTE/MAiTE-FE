@@ -149,6 +149,10 @@ export interface BackendMeetingStartResult {
   agoraAppId: string;
   agoraChannel: string;
   agoraToken: string;
+  // 사람 참여자가 join할 때 반드시 이 uid를 써야 한다 — 아바타 모드에서는 백엔드가
+  // remote_rtc_uids에 이 값 하나만 명시해두기 때문에(Agora가 "*" 전체구독을 거부함),
+  // 다른 uid로 join하면 에이전트가 사람 음성을 구독하지 못한다.
+  agoraUid: number;
   agoraAgentUid: number;
 }
 

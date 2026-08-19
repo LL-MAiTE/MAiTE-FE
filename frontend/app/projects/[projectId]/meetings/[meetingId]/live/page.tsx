@@ -285,6 +285,7 @@ export default function LiveMeetingPage({
       await session.connect(startData.agoraChannel, {
         appId: startData.agoraAppId,
         token: startData.agoraToken,
+        uid: startData.agoraUid,
       });
 
       setBackendStatus("실행중");
