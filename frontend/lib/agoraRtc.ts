@@ -26,9 +26,18 @@ export interface RemoteParticipant {
   videoTrack?: any;
 }
 
+/** Agora ConvAI가 RTC data stream으로 실시간 전사를 보낼 때 한 조각(final 또는 중간본). */
+export interface TranscriptChunk {
+  speaker: "USER" | "AI_AGENT";
+  text: string;
+  isFinal: boolean;
+}
+
 export interface AgoraSessionHandlers {
   onStatusChange: (status: AgoraConnectionStatus, error?: string) => void;
   onRemoteParticipantsChange: (participants: RemoteParticipant[]) => void;
+  /** 백엔드 폴링 없이, RTC 채널로 직접 오는 실시간 전사. 선택적 — 안 넘기면 무시. */
+  onTranscriptChunk?: (chunk: TranscriptChunk) => void;
 }
 
 interface TokenResponse {
@@ -60,6 +69,10 @@ export class AgoraVoiceSession {
   private localAudioTrack: any = null;
   private remoteParticipants = new Map<string | number, RemoteParticipant>();
   private handlers: AgoraSessionHandlers;
+  // Agora ConvAI의 실시간 전사 stream-message는 큰 페이로드를 청크로 쪼개서 보낸다
+  // (포맷: "{msgId}|{chunkIndex}|{totalChunks}|{base64Chunk}"). 전체 청크가 모일 때까지
+  // msgId별로 모아뒀다가 조립한다. (test-meeting.html에서 이미 검증된 파싱 로직 이식)
+  private transcriptChunkBuffer = new Map<string, (string | null)[]>();
 
   constructor(handlers: AgoraSessionHandlers) {
     this.handlers = handlers;
@@ -147,6 +160,48 @@ export class AgoraVoiceSession {
         this.emitRemote();
       });
 
+      // 실시간 전사(양쪽 발화) — Agora ConvAI가 RTC data stream으로 청크 단위로 보낸다.
+      // 백엔드 웹훅/폴링과 무관하게 이 채널에 join만 하면 바로 받을 수 있다.
+      if (this.handlers.onTranscriptChunk) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        this.client.on("stream-message", (_uid: any, data: Uint8Array) => {
+          try {
+            const raw = new TextDecoder().decode(data);
+            const parts = raw.split("|");
+            if (parts.length < 4) return;
+
+            const msgId = parts[0];
+            const chunkIdx = parseInt(parts[1], 10) - 1; // 0-based
+            const totalChunks = parseInt(parts[2], 10);
+            const b64chunk = parts[3];
+
+            if (!this.transcriptChunkBuffer.has(msgId)) {
+              this.transcriptChunkBuffer.set(msgId, new Array(totalChunks).fill(null));
+            }
+            const buf = this.transcriptChunkBuffer.get(msgId)!;
+            buf[chunkIdx] = b64chunk;
+            if (buf.some((c) => c === null)) return; // 아직 청크가 덜 옴
+
+            const fullB64 = buf.join("");
+            this.transcriptChunkBuffer.delete(msgId);
+
+            const msg = JSON.parse(atob(fullB64));
+            const object = msg.object ?? "";
+            const text = msg.text ?? "";
+            if (!text) return;
+            if (object !== "assistant.transcription" && object !== "user.transcription") return;
+
+            this.handlers.onTranscriptChunk?.({
+              speaker: object.startsWith("assistant") ? "AI_AGENT" : "USER",
+              text,
+              isFinal: msg.final === true || msg.is_final === true,
+            });
+          } catch {
+            // 파싱 실패는 조용히 무시 — 오디오 통화 자체엔 영향 없음
+          }
+        });
+      }
+
       await this.client.join(appId, channelName, token, uid);
       // eslint-disable-next-line no-console
       console.log(`[Agora] 채널 join 완료 — 지금 채널 안에 있는 다른 사람 수: ${this.client.remoteUsers.length}`);
@@ -205,6 +260,7 @@ export class AgoraVoiceSession {
     }
 
     this.remoteParticipants.clear();
+    this.transcriptChunkBuffer.clear();
     this.handlers.onStatusChange("연결안됨");
   }
 }

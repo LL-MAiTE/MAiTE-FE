@@ -6,7 +6,7 @@ import { useStore } from "@/lib/store";
 import { EmptyState, Card } from "@/components/Card";
 import { HoldStatusBadge, MeetingStatusBadge } from "@/components/Badge";
 import { evaluateAlternativeMock } from "@/lib/mockAi";
-import { AgoraConnectionStatus, AgoraVoiceSession, RemoteParticipant } from "@/lib/agoraRtc";
+import { AgoraConnectionStatus, AgoraVoiceSession, RemoteParticipant, TranscriptChunk } from "@/lib/agoraRtc";
 import type { MatchResult, Speaker, TranscriptEntry } from "@/lib/types";
 
 const VOICE_STATUS_DOT: Record<AgoraConnectionStatus, "neutral" | "warn" | "success" | "danger"> = {
@@ -96,10 +96,37 @@ export default function LiveMeetingPage({
   const [backendError, setBackendError] = useState<string | null>(null);
   const [backendMeetingId, setBackendMeetingId] = useState<string | null>(null);
 
-  // 백엔드가 Agora 콜백으로 실시간 저장하는 실제 대화(양쪽 발화 원문)를 폴링해서 보여준다.
-  // 백엔드 미팅이 붙어있는 동안은 이게 진짜 대화이므로, 로컬 mock 텍스트 시뮬레이션
-  // (meeting.transcript, 아래 "질문하기" 폼)보다 우선해서 보여준다.
+  // Agora RTC data stream(stream-message)으로 직접 오는 실시간 전사(양쪽 발화 원문).
+  // 백엔드 웹훅/폴링 없이 RTC 채널 join만으로 받는다 — 채널에 join한 그 누구나(사람이든
+  // 이 세션이든) 받을 수 있는 브로드캐스트라, 폴링보다 훨씬 빠르고 별도 백엔드 설정도
+  // 필요 없다. 백엔드 미팅이 붙어있는 동안은 이게 진짜 대화이므로, 로컬 mock 텍스트
+  // 시뮬레이션(meeting.transcript, 아래 "질문하기" 폼)보다 우선해서 보여준다.
   const [liveTranscript, setLiveTranscript] = useState<TranscriptEntry[]>([]);
+  // 현재 "말하는 중"(아직 final 아님)인 발화가 있으면 그 항목을 계속 갱신하고, final이
+  // 되거나 화자가 바뀌면 새 항목을 시작한다.
+  const inProgressRef = useRef<{ speaker: TranscriptChunk["speaker"]; id: string } | null>(null);
+
+  const handleTranscriptChunk = (chunk: TranscriptChunk) => {
+    setLiveTranscript((prev) => {
+      const inProgress = inProgressRef.current;
+      if (inProgress && inProgress.speaker === chunk.speaker) {
+        const updated = prev.map((e) => (e.id === inProgress.id ? { ...e, text: chunk.text } : e));
+        if (chunk.isFinal) inProgressRef.current = null;
+        return updated;
+      }
+      const id = `live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const entry: TranscriptEntry = {
+        id,
+        speaker: chunk.speaker === "AI_AGENT" ? "ai" : "counterpart",
+        speakerLabel: chunk.speaker === "AI_AGENT" ? "AI 협상 대리인" : counterpartLabel,
+        timestamp: new Date().toLocaleTimeString("ko-KR", { hour12: false }),
+        text: chunk.text,
+        translatedText: null,
+      };
+      inProgressRef.current = chunk.isFinal ? null : { speaker: chunk.speaker, id };
+      return [...prev, entry];
+    });
+  };
 
   // 상단 통화 타이머(장식용) — 백엔드 회의가 "실행중"이 된 시점부터 초 단위로 센다.
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -136,40 +163,14 @@ export default function LiveMeetingPage({
     return () => clearInterval(interval);
   }, [backendStatus]);
 
-  // 백엔드 미팅이 실행 중인 동안 3초 간격으로 실제 대화 원문을 폴링. speakerLabel
-  // "USER"/"AI_AGENT"를 화면 표시용 Speaker("counterpart"/"ai")로 변환한다.
-  useEffect(() => {
-    if (backendStatus !== "실행중" || !backendMeetingId) return;
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/backend/meeting-transcripts?backendMeetingId=${backendMeetingId}`);
-        const data = await res.json();
-        if (cancelled || !res.ok || !Array.isArray(data.transcripts)) return;
-        setLiveTranscript(
-          data.transcripts.map((t: { id: string; speakerLabel: string; text: string; spokenAt: string }) => ({
-            id: t.id,
-            speaker: t.speakerLabel === "AI_AGENT" ? "ai" : "counterpart",
-            speakerLabel: t.speakerLabel === "AI_AGENT" ? "AI 협상 대리인" : counterpartLabel,
-            timestamp: new Date(t.spokenAt).toLocaleTimeString("ko-KR", { hour12: false }),
-            text: t.text,
-            translatedText: null,
-          }))
-        );
-      } catch {
-        // 폴링 실패는 조용히 무시하고 다음 tick에서 재시도 — 통화 자체를 끊지 않는다.
-      }
-    };
-
-    poll();
-    const interval = setInterval(poll, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backendStatus, backendMeetingId]);
+  // ⚠️ 예전엔 여기서 백엔드 /meetings/:id/transcripts를 3초 간격으로 폴링했는데,
+  // 그 데이터의 원천이던 Agora message_subscriber 웹훅이 실제로는 동작하지 않는
+  // 필드였다는 게 밝혀졌다(Agora가 그 URL을 호출한 적이 없음 — 로그로 확인).
+  // 대신 handleTranscriptChunk(위)가 RTC data stream(stream-message)에서 직접,
+  // 훨씬 빠르게(청크 단위, 폴링 지연 없음) 실시간 전사를 받는다 — AgoraVoiceSession
+  // 생성 시 onTranscriptChunk 핸들러로 연결(아래 handleStartBackendMeeting 참고).
+  // 백엔드의 GET /meetings/:id/transcripts 자체는 살려뒀다 — 미팅 종료 후 보류함/
+  // 사후검토 화면이 저장된 원문을 다시 읽어올 때는 여전히 유효하다.
 
   // 기능6: 숫자확인 팝업 10초 카운트다운. 1초마다 감소시키고 0이 되면 자동 보류(미응답).
   useEffect(() => {
@@ -270,12 +271,15 @@ export default function LiveMeetingPage({
       if (!startRes.ok) throw new Error(startData.error ?? `HTTP ${startRes.status}`);
 
       // 3) 사람 참여자도 백엔드가 발급한 같은 채널/토큰으로 RTC join
+      setLiveTranscript([]);
+      inProgressRef.current = null;
       const session = new AgoraVoiceSession({
         onStatusChange: (status, error) => {
           setVoiceStatus(status);
           if (error) setVoiceError(error);
         },
         onRemoteParticipantsChange: setRemoteParticipants,
+        onTranscriptChunk: handleTranscriptChunk,
       });
       voiceSessionRef.current = session;
       await session.connect(startData.agoraChannel, {
