@@ -134,6 +134,25 @@ export default function LiveMeetingPage({
   // AI 참가자 타일 안에 아바타(LiveAvatar) 비디오를 붙일 DOM. 백엔드에 LiveAvatar
   // 설정이 안 돼있으면 비디오 트랙 자체가 안 와서, 기존처럼 ✨ 아이콘만 보인다.
   const aiVideoRef = useRef<HTMLDivElement | null>(null);
+  // 전체화면 — 통화창(.live-call-shell)만 전체화면으로 키운다(페이지 전체가 아니라).
+  const callShellRef = useRef<HTMLDivElement | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === callShellRef.current);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const handleToggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      callShellRef.current?.requestFullscreen?.().catch(() => {
+        // 브라우저가 거부해도(권한/미지원) 조용히 무시 — 통화 자체엔 영향 없음
+      });
+    }
+  };
   const avatarParticipant = remoteParticipants.find((p) => p.hasVideo && p.videoTrack);
 
   useEffect(() => {
@@ -352,7 +371,7 @@ export default function LiveMeetingPage({
         )}
       </div>
 
-      <div className="live-call-shell">
+      <div className="live-call-shell" ref={callShellRef}>
         <div className="live-call-header">
           <div className="live-call-header-left">
             <Link href={`/projects/${project.id}/meetings/${meeting.id}`} className="live-call-exit-btn">
@@ -484,6 +503,12 @@ export default function LiveMeetingPage({
                     <img src="/icons/icon-phone-end.svg" alt="" width={18} height={18} />
                   </span>
                   <span className="live-control-label">종료</span>
+                </button>
+                <button type="button" className="live-control-btn" onClick={handleToggleFullscreen}>
+                  <span className="live-control-btn-icon" style={{ fontSize: 16 }}>
+                    {isFullscreen ? "⤡" : "⤢"}
+                  </span>
+                  <span className="live-control-label">{isFullscreen ? "전체화면 해제" : "전체화면"}</span>
                 </button>
               </div>
               <div className="live-control-status">

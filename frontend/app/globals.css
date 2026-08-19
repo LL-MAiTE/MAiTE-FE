@@ -1628,6 +1628,17 @@ textarea {
   margin-bottom: 24px;
 }
 
+/* 전체화면 버튼으로 이 카드만 전체화면 전환할 때 — 카드 느낌(둥근 모서리/그림자)을 없애고
+   뷰포트를 꽉 채운다. 세로로 넘치면(작은 화면) 스크롤 가능하게. */
+.live-call-shell:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  box-shadow: none;
+  margin-bottom: 0;
+  overflow-y: auto;
+}
+
 .live-call-header {
   display: flex;
   align-items: center;

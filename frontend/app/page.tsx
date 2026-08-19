@@ -19,7 +19,7 @@ import { MeetingStatusBadge } from "@/components/Badge";
  *    없어 이번 스코프에서 제외했다.
  */
 export default function HomeDashboardPage() {
-  const { projects, meetings, getMeetingsByProject, createProject } = useStore();
+  const { projects, meetings, getMeetingsByProject, createProject, deleteProject } = useStore();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -235,7 +235,27 @@ export default function HomeDashboardPage() {
                     <span className="widget-icon-badge" style={{ width: 40, height: 40, fontSize: 18 }}>
                       📁
                     </span>
-                    <span className="badge badge-info">진행 중</span>
+                    <div className="row" style={{ flexWrap: "nowrap", gap: 6 }}>
+                      <span className="badge badge-info">진행 중</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        title="프로젝트 삭제"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (
+                            window.confirm(
+                              `"${project.name}" 프로젝트를 삭제할까요? 딸린 회의 ${projectMeetings.length}건도 함께 삭제되며, 되돌릴 수 없습니다.`
+                            )
+                          ) {
+                            deleteProject(project.id);
+                          }
+                        }}
+                      >
+                        삭제
+                      </button>
+                    </div>
                   </div>
                   <h3 style={{ marginTop: 12 }}>{project.name}</h3>
                   {project.description && <p className="muted">{project.description}</p>}

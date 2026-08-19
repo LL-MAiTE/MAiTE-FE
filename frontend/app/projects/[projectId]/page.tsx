@@ -40,7 +40,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export default function ProjectDetailPage({ params }: { params: { projectId: string } }) {
-  const { getProject, getMeetingsByProject, addDocument } = useStore();
+  const { getProject, getMeetingsByProject, addDocument, deleteMeeting } = useStore();
   const project = getProject(params.projectId);
   const meetings = getMeetingsByProject(params.projectId);
 
@@ -336,6 +336,20 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                   </p>
                 </div>
                 <MeetingStatusBadge status={meeting.status} />
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  title="회의 삭제"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (window.confirm(`"${meeting.title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) {
+                      deleteMeeting(meeting.id);
+                    }
+                  }}
+                >
+                  삭제
+                </button>
               </Link>
             ))
           )}

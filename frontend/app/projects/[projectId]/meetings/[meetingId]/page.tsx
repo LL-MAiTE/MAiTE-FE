@@ -33,6 +33,7 @@ export default function MeetingDetailPage({
     updatePosition,
     addUserPosition,
     startLiveMeeting,
+    deleteMeeting,
   } = useStore();
 
   const project = getProject(params.projectId);
@@ -59,6 +60,12 @@ export default function MeetingDetailPage({
   const handleStartLive = () => {
     startLiveMeeting(meeting.id);
     router.push(`/projects/${project.id}/meetings/${meeting.id}/live`);
+  };
+
+  const handleDelete = () => {
+    if (!window.confirm(`"${meeting.title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    deleteMeeting(meeting.id);
+    router.push(`/projects/${project.id}`);
   };
 
   return (
@@ -93,6 +100,11 @@ export default function MeetingDetailPage({
           >
             {meeting.status === "라이브" ? "라이브 화면으로" : "결과 검토로"}
           </Link>
+        )}
+        {meeting.status !== "라이브" && (
+          <button type="button" className="btn btn-ghost" onClick={handleDelete}>
+            삭제
+          </button>
         )}
       </div>
 

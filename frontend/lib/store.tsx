@@ -103,6 +103,7 @@ interface StoreContextValue {
   getMeetingsByProject: (projectId: string) => Meeting[];
 
   createProject: (name: string, description: string) => Project;
+  deleteProject: (projectId: string) => void;
   addDocument: (projectId: string, doc: Omit<ProjectDocument, "id" | "updatedAt">) => void;
 
   createMeeting: (input: {
@@ -112,6 +113,7 @@ interface StoreContextValue {
     counterpartInfo: string;
     selectedDocumentIds: string[];
   }) => Promise<Meeting>;
+  deleteMeeting: (meetingId: string) => void;
   regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
 
   updatePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => void;
@@ -218,6 +220,27 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     };
     setState((prev) => ({ ...prev, projects: [...prev.projects, project] }));
     return project;
+  }, []);
+
+  // 프로젝트를 지우면 거기 딸린 미팅도 고아로 남지 않게 같이 지운다.
+  const deleteProject = useCallback((projectId: string) => {
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.filter((p) => p.id !== projectId),
+      meetings: prev.meetings.filter((m) => m.projectId !== projectId),
+    }));
+  }, []);
+
+  const deleteMeeting = useCallback((meetingId: string) => {
+    setState((prev) => ({
+      ...prev,
+      meetings: prev.meetings.filter((m) => m.id !== meetingId),
+      projects: prev.projects.map((p) =>
+        p.meetingIds.includes(meetingId)
+          ? { ...p, meetingIds: p.meetingIds.filter((id) => id !== meetingId) }
+          : p
+      ),
+    }));
   }, []);
 
   const addDocument = useCallback(
@@ -696,8 +719,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     getMeeting,
     getMeetingsByProject,
     createProject,
+    deleteProject,
     addDocument,
     createMeeting,
+    deleteMeeting,
     regenerateDraftPositions,
     updatePosition,
     setPositionApproval,
