@@ -44,6 +44,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     getProject,
     getMeetingsByProject,
     refreshProjectDocuments,
+    refreshProjectMeetings,
     addDocument,
     deleteDocument,
     deleteMeeting,
@@ -82,7 +83,11 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [docActionError, setDocActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (project) refreshProjectDocuments(project.id).catch(() => {});
+    if (!project) return;
+    refreshProjectDocuments(project.id).catch(() => {});
+    // 문서 목록과 함께 회의(안건) 목록도 백엔드 기준으로 다시 채운다 — 다른 브라우저/
+    // 기기에서 만든 회의도 이 프로젝트에 들어오면 바로 보이게.
+    refreshProjectMeetings(project.id).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 

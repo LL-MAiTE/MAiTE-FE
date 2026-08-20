@@ -98,7 +98,18 @@ export interface BackendAgenda {
   id: string;
   projectId: string;
   title: string;
+  purpose: string | null;
+  counterpartCountry: string | null;
+  counterpartLanguage: string | null;
   status: string;
+  createdAt: string;
+}
+
+/** 프로젝트에 딸린 안건(=프론트의 "회의") 전체를 가져온다. 회의 목록은 오랫동안
+ * localStorage만 원본이었는데(다른 브라우저·기기로 로그인하면 안 보임), 이제 이걸로
+ * 백엔드 기준으로 다시 채운다. */
+export async function listBackendAgendas(token: string, projectId: string): Promise<BackendAgenda[]> {
+  return backendFetch<BackendAgenda[]>(token, `/projects/${projectId}/agendas`);
 }
 
 export async function createBackendAgenda(
@@ -136,6 +147,15 @@ export interface BackendReferenceDocument {
   documentTitle: string;
   isCoreContext: boolean;
   excluded: boolean;
+}
+
+/** 등록된 참조 문서 전체(제외된 것 포함)를 가져온다 — 회의를 다시 열었을 때 "참고 문서"
+ * 체크 상태(및 exclude 토글에 필요한 referenceDocRefIds)를 복원하는 데 쓴다. */
+export async function listBackendReferenceDocuments(
+  token: string,
+  agendaId: string
+): Promise<BackendReferenceDocument[]> {
+  return backendFetch<BackendReferenceDocument[]>(token, `/agendas/${agendaId}/reference-documents`);
 }
 
 export async function selectBackendReferenceDocuments(
@@ -286,11 +306,21 @@ export async function addAndApproveBackendPosition(
 export interface BackendMeeting {
   id: string;
   agendaId: string;
-  status: string;
+  status: "IN_PROGRESS" | "PENDING_FOLLOWUP" | "CLOSED";
+  startedAt: string | null;
+  disclosureCompletedAt: string | null;
+  voiceSessionEndedAt: string | null;
+  closedAt: string | null;
 }
 
 export async function createBackendMeeting(token: string, agendaId: string): Promise<BackendMeeting> {
   return backendFetch<BackendMeeting>(token, `/agendas/${agendaId}/meetings`, { method: "POST" });
+}
+
+/** 이 안건이 실제로 라이브를 시작한 적 있는지, 시작했다면 지금 Meeting 상태가 뭔지
+ * 조회한다 — 보통 0개(아직 라이브 안 함) 또는 1개다. */
+export async function listBackendMeetingsByAgenda(token: string, agendaId: string): Promise<BackendMeeting[]> {
+  return backendFetch<BackendMeeting[]>(token, `/agendas/${agendaId}/meetings`);
 }
 
 export interface BackendMeetingStartResult {

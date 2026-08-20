@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { selectBackendReferenceDocuments } from "@/lib/backendApi";
+import { listBackendReferenceDocuments, selectBackendReferenceDocuments } from "@/lib/backendApi";
 import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
+
+/** GET /api/backend/agendas/:id/reference-documents — 등록된 참조 문서 전체(제외 포함) 조회. */
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
+  try {
+    const referenceDocuments = await listBackendReferenceDocuments(token, params.id);
+    return NextResponse.json({ referenceDocuments });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+}
 
 /** POST /api/backend/agendas/:id/reference-documents — body: { sourceDocumentIds: string[] } */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {

@@ -4,8 +4,10 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 import {
   ConfidenceLevel,
   HoldItem,
+  HoldItemStatus,
   HoldReasonType,
   MandatoryReviewItem,
+  MandatoryReviewStatus,
   MAX_REOPEN_COUNT,
   Meeting,
   MeetingStatus,
@@ -158,6 +160,192 @@ async function generateDraftPositionsOnBackend(
   return body.positions.map((p) => mapBackendPosition(p, project));
 }
 
+// -----------------------------------------------------------------------
+// 회의 목록/실데이터 하이드레이션 — Phase 5로 안건·포지션은 백엔드가 원본이 됐지만,
+// meeting 목록 자체(어떤 안건들이 있는지)는 이 작업 전까지도 localStorage(브라우저별)만
+// 원본이었다 — 다른 브라우저·기기로 로그인하면 이미 만든 회의가 안 보이는 문제가 있었음.
+// 아래는 그걸 고치는 하이드레이션: 로그인 시(전체) + 프로젝트 상세 진입 시(해당 프로젝트만)
+// 안건을 백엔드에서 다시 가져와 로컬 meetings를 채운다 — documents와 같은 패턴이다.
+// (참고: 보류함/필수검토 "전역 모아보기" 화면의 후속답변·재오픈 등 액션 버튼은 아직
+// 이 하이드레이션으로 채운 로컬 값을 그대로 mutate만 한다 — 실제 백엔드 반영은 다음
+// 작업(팀 역할분담 A) 범위다.)
+// -----------------------------------------------------------------------
+
+const AGENDA_STATUS_MAP: Record<string, MeetingStatus> = {
+  READY: "준비중",
+  PREPARING: "승인대기",
+  APPROVED: "승인대기",
+};
+
+const HOLD_ITEM_STATUS_MAP: Record<string, HoldItemStatus> = {
+  UNRESOLVED: "보류",
+  AWAITING_ANSWER: "후속답변대기",
+  CONFIRMED_IMMEDIATE: "확정",
+  CONFIRMED_TIMEOUT: "확정",
+  REOPENED: "보류",
+  NEEDS_REALTIME: "실시간조율필요",
+};
+
+const REQUIRED_REVIEW_STATUS_MAP: Record<string, MandatoryReviewStatus> = {
+  CONDITIONAL: "확인전",
+  CONFIRMED: "확인후확정",
+  REVISED: "확인후확정",
+  WITHDRAWN: "확인전",
+};
+
+function mapBackendTranscripts(raw: Record<string, unknown>[]): TranscriptEntry[] {
+  return raw.map((t) => {
+    const speakerLabel = (t.speakerLabel as string) ?? "";
+    const isAgent = speakerLabel.startsWith("AI");
+    return {
+      id: t.id as string,
+      speaker: isAgent ? "ai" : "counterpart",
+      speakerLabel: isAgent ? "AI 진행자" : "상대방",
+      timestamp: new Date(t.spokenAt as string).toLocaleTimeString("ko-KR", { hour12: false }),
+      text: t.text as string,
+      translatedText: null,
+    };
+  });
+}
+
+function mapBackendHoldItem(raw: Record<string, unknown>, logCaptionById: Map<string, string | null>): HoldItem {
+  const meetingLogId = raw.meetingLogId as string | null;
+  return {
+    id: raw.id as string,
+    meetingId: raw.meetingId as string,
+    relatedTopic: null,
+    reasonType: "핵심의도불일치",
+    reason: (raw.reason as string | null) ?? (meetingLogId ? logCaptionById.get(meetingLogId) ?? "" : "") ?? "",
+    transcriptEntryId: null,
+    status: HOLD_ITEM_STATUS_MAP[raw.status as string] ?? "보류",
+    followupAnswer: (raw.answerText as string | null) ?? null,
+    followupSentAt: (raw.answeredAt as string | null) ?? null,
+    followupDeadline: null,
+    reopenCount: (raw.reopenCount as number) ?? 0,
+    reopenHistory: [],
+  };
+}
+
+function mapBackendRequiredReview(
+  raw: Record<string, unknown>,
+  meetingId: string,
+  logCaptionById: Map<string, string | null>
+): MandatoryReviewItem {
+  const meetingLogId = raw.meetingLogId as string;
+  return {
+    id: raw.id as string,
+    meetingId,
+    relatedTopic: null,
+    label: logCaptionById.get(meetingLogId) || "필수 검토 항목",
+    requestedByCounterpart: true,
+    status: REQUIRED_REVIEW_STATUS_MAP[raw.status as string] ?? "확인전",
+    confirmationNote: null,
+  };
+}
+
+/**
+ * 안건 하나를 로컬 Meeting으로 완전히 재구성한다: 안건 자체 필드 + 포지션 + 참조 문서
+ * 선택 상태 + (라이브를 한 번이라도 시작했으면) 실제 통화에서 쌓인 대화·보류·필수검토까지.
+ * project를 안 넘기면(예: 로그인 직후 부트스트랩) sourceDocumentTitle이 비어 보일 수 있는데
+ * — 그 프로젝트 상세 화면에 들어가면 문서 목록과 함께 다시 채워진다.
+ */
+async function fetchAgendaAsMeeting(
+  agenda: Record<string, unknown>,
+  project: Project | undefined
+): Promise<Meeting> {
+  const agendaId = agenda.id as string;
+
+  const [positions, refDocsRes, meetingsRes] = await Promise.all([
+    fetchAgendaPositions(agendaId, project),
+    fetch(`/api/backend/agendas/${agendaId}/reference-documents`)
+      .then((r) => r.json())
+      .catch(() => ({ referenceDocuments: [] })),
+    fetch(`/api/backend/agendas/${agendaId}/meetings`)
+      .then((r) => r.json())
+      .catch(() => ({ meetings: [] })),
+  ]);
+
+  const referenceDocRefIds: Record<string, string> = {};
+  const selectedDocumentIds: string[] = [];
+  for (const ref of (refDocsRes.referenceDocuments ?? []) as Record<string, unknown>[]) {
+    const sourceDocumentId = ref.sourceDocumentId as string;
+    referenceDocRefIds[sourceDocumentId] = ref.id as string;
+    if (!ref.excluded) selectedDocumentIds.push(sourceDocumentId);
+  }
+
+  const backendMeetings = (meetingsRes.meetings ?? []) as Record<string, unknown>[];
+  const latestBackendMeeting = backendMeetings[backendMeetings.length - 1];
+
+  let status = AGENDA_STATUS_MAP[agenda.status as string] ?? "승인대기";
+  let transcript: TranscriptEntry[] = [];
+  let holdItems: HoldItem[] = [];
+  let mandatoryReviewItems: MandatoryReviewItem[] = [];
+
+  if (latestBackendMeeting) {
+    const backendMeetingId = latestBackendMeeting.id as string;
+    const [transcriptsRes, holdItemsRes, requiredReviewsRes, logsRes] = await Promise.all([
+      fetch(`/api/backend/meeting-transcripts?backendMeetingId=${backendMeetingId}`)
+        .then((r) => r.json())
+        .catch(() => ({ transcripts: [] })),
+      fetch(`/api/backend/hold-items?backendMeetingId=${backendMeetingId}`)
+        .then((r) => r.json())
+        .catch(() => ({ holdItems: [] })),
+      fetch(`/api/backend/required-reviews?backendMeetingId=${backendMeetingId}`)
+        .then((r) => r.json())
+        .catch(() => ({ requiredReviews: [] })),
+      fetch(`/api/backend/meeting-logs?backendMeetingId=${backendMeetingId}`)
+        .then((r) => r.json())
+        .catch(() => ({ logs: [] })),
+    ]);
+
+    const logCaptionById = new Map<string, string | null>(
+      ((logsRes.logs ?? []) as Record<string, unknown>[]).map((l) => [
+        l.id as string,
+        (l.translatedCaption as string | null) ?? (l.limitationNote as string | null),
+      ])
+    );
+
+    transcript = mapBackendTranscripts((transcriptsRes.transcripts ?? []) as Record<string, unknown>[]);
+    holdItems = ((holdItemsRes.holdItems ?? []) as Record<string, unknown>[]).map((h) =>
+      mapBackendHoldItem(h, logCaptionById)
+    );
+    mandatoryReviewItems = ((requiredReviewsRes.requiredReviews ?? []) as Record<string, unknown>[]).map((r) =>
+      mapBackendRequiredReview(r, backendMeetingId, logCaptionById)
+    );
+
+    const meetingStatus = latestBackendMeeting.status as string;
+    if (meetingStatus === "IN_PROGRESS") status = "라이브";
+    else if (meetingStatus === "PENDING_FOLLOWUP") status = "후속답변대기";
+    else if (meetingStatus === "CLOSED") status = "종료";
+  }
+
+  return {
+    id: agendaId,
+    projectId: agenda.projectId as string,
+    title: agenda.title as string,
+    purpose: (agenda.purpose as string) ?? "",
+    counterpartInfo: (agenda.counterpartCountry as string) ?? "",
+    counterpartLanguageCode: (agenda.counterpartLanguage as string) ?? "ko-KR",
+    selectedDocumentIds,
+    referenceDocRefIds,
+    status,
+    positions,
+    transcript,
+    holdItems,
+    mandatoryReviewItems,
+    createdAt: (agenda.createdAt as string) ?? new Date().toISOString(),
+  };
+}
+
+/** 프로젝트 하나에 딸린 회의(안건) 전체를 백엔드 기준으로 다시 구성한다. */
+async function fetchProjectMeetings(projectId: string, project: Project | undefined): Promise<Meeting[]> {
+  const res = await fetch(`/api/backend/projects/${projectId}/agendas`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "회의 목록을 불러오지 못했습니다.");
+  const agendas = (body.agendas ?? []) as Record<string, unknown>[];
+  return Promise.all(agendas.map((agenda) => fetchAgendaAsMeeting(agenda, project)));
+}
+
 function seedState(): StoreState {
   // 예전엔 여기서 데모용 mock 프로젝트/회의(lib/mockSeed.ts)를 채워서 시작했는데,
   // 이제 실제 로그인 계정이 있어서 매 계정이 남의 가짜 데모 데이터를 보게 되는 게
@@ -213,6 +401,9 @@ interface StoreContextValue {
   /** 문서 목록을 백엔드에서 다시 가져와 project.documents를 갱신한다 — 페이지 마운트 시,
    * 또는 Git 연동 동기화처럼 store가 모르게 문서가 바뀌었을 때 호출한다. */
   refreshProjectDocuments: (projectId: string) => Promise<void>;
+  /** 이 프로젝트의 회의(안건) 목록을 백엔드에서 다시 가져와 채운다 — 다른 브라우저·기기에서
+   * 만든 회의를 반영하거나, 방금 실제 라이브가 끝나 상태·보류함·필수검토가 바뀌었을 때 쓴다. */
+  refreshProjectMeetings: (projectId: string) => Promise<void>;
   addDocument: (
     projectId: string,
     doc: { title: string; content: string; isCoreContext: boolean }
@@ -318,7 +509,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     fetch("/api/backend/projects")
       .then((res) => res.json())
-      .then((data) => {
+      .then(async (data) => {
         if (cancelled) return;
         const backendProjects: { id: string; name: string; description: string | null }[] =
           data.projects ?? [];
@@ -335,6 +526,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             };
           });
           return { ...prev, projects };
+        });
+
+        // 프로젝트 목록을 받아온 김에 그 프로젝트들에 딸린 회의(안건)도 전부 백엔드
+        // 기준으로 다시 채운다 — 안 그러면 다른 브라우저/기기에서 로그인했을 때 이미
+        // 만든 회의가 하나도 안 보인다(회의 목록/보류함/필수검토 전역 화면 전부 포함).
+        // project를 안 넘겨서(문서 목록을 아직 안 가져온 시점) sourceDocumentTitle은
+        // 이 시점엔 비어 보일 수 있는데, 해당 프로젝트 상세로 들어가면 다시 채워진다.
+        const results = await Promise.allSettled(
+          backendProjects.map((bp) => fetchProjectMeetings(bp.id, undefined))
+        );
+        if (cancelled) return;
+        setState((prev) => {
+          const meetingsByProject = new Map<string, Meeting[]>();
+          results.forEach((r, i) => {
+            if (r.status === "fulfilled") meetingsByProject.set(backendProjects[i].id, r.value);
+          });
+          const untouched = prev.meetings.filter((m) => !meetingsByProject.has(m.projectId));
+          const refreshed = Array.from(meetingsByProject.values()).flat();
+          return {
+            ...prev,
+            meetings: [...untouched, ...refreshed],
+            projects: prev.projects.map((p) =>
+              meetingsByProject.has(p.id)
+                ? { ...p, meetingIds: (meetingsByProject.get(p.id) ?? []).map((m) => m.id) }
+                : p
+            ),
+          };
         });
       })
       .catch(() => {
@@ -454,6 +672,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       applyBackendDocuments(projectId, body.documents ?? []);
     },
     [applyBackendDocuments]
+  );
+
+  const refreshProjectMeetings = useCallback(
+    async (projectId: string) => {
+      const project = state.projects.find((p) => p.id === projectId);
+      const meetings = await fetchProjectMeetings(projectId, project);
+      setState((prev) => ({
+        ...prev,
+        meetings: [...prev.meetings.filter((m) => m.projectId !== projectId), ...meetings],
+        projects: prev.projects.map((p) =>
+          p.id === projectId ? { ...p, meetingIds: meetings.map((m) => m.id) } : p
+        ),
+      }));
+    },
+    [state.projects]
   );
 
   const addDocument = useCallback(
@@ -999,6 +1232,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     createProject,
     deleteProject,
     refreshProjectDocuments,
+    refreshProjectMeetings,
     addDocument,
     deleteDocument,
     createMeeting,
