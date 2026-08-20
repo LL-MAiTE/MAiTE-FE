@@ -6,14 +6,12 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
  * 로그인/회원가입 상태 관리. 백엔드(MAiTE-BE)의 /auth/login, /auth/signup이 실제로
  * 존재해서(JWT 발급) 여기 붙였다 — /api/auth/* 라우트가 얇게 프록시한다.
  *
- * 발급받은 JWT + 사용자 정보를 localStorage(tkzr_auth_v1)에 그대로 저장한다. httpOnly
- * 쿠키가 더 안전하지만, 해커톤 데모 스코프에서는 lib/store.tsx가 이미 같은 방식으로
- * localStorage를 쓰고 있어 일관성을 맞췄다.
- *
- * ⚠️ 주의: 프로젝트/회의/문서 등 실제 백엔드 데이터 호출(lib/backendApi.ts)은 지금도
- * 고정 서비스 계정 토큰(BACKEND_API_TOKEN)을 그대로 쓴다 — 로그인은 "누가 접속했는지"만
- * 구분하고, 데이터 자체는 여전히 단일 테넌트로 동작한다 (사용자별 데이터 분리는 이번
- * 스코프 밖). [[tkzr-scope-decisions]]
+ * 발급받은 JWT는 lib/session.ts가 httpOnly 쿠키(tkzr_session)로 들고 있고, 이게
+ * 백엔드 API 호출의 실제 인증 수단이다(lib/backendApi.ts가 이 쿠키 값을 그대로
+ * Authorization 헤더에 실어 보냄 — 더 이상 고정 서비스 계정 토큰을 쓰지 않는다).
+ * 여기 이 파일이 localStorage(tkzr_auth_v1)에 따로 저장하는 건 화면 표시용 사본
+ * (user.name/email, 로그인 여부 판단)일 뿐이다 — 로그인/회원가입/로그아웃 시점에
+ * 쿠키와 항상 같이 갱신되므로 둘이 어긋날 일은 없다.
  */
 
 export interface AuthUser {
@@ -90,7 +88,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [persist]
   );
 
-  const logout = useCallback(() => persist(null), [persist]);
+  const logout = useCallback(() => {
+    persist(null);
+    // 실패해도 로컬 로그아웃(persist(null))은 이미 끝났으니 조용히 무시 — 쿠키가 남아있으면
+    // 다음 로그인 때 새 토큰으로 어차피 덮어써진다.
+    fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  }, [persist]);
 
   return (
     <AuthContext.Provider

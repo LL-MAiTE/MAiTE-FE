@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markBackendNotificationRead, markAllBackendNotificationsRead } from "@/lib/backendApi";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -15,11 +16,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "요청 바디가 JSON이 아닙니다." }, { status: 400 });
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
     if (body.all) {
-      await markAllBackendNotificationsRead();
+      await markAllBackendNotificationsRead(token);
     } else if (body.notificationId) {
-      await markBackendNotificationRead(body.notificationId);
+      await markBackendNotificationRead(token, body.notificationId);
     } else {
       return NextResponse.json({ error: "notificationId 또는 all이 필요합니다." }, { status: 400 });
     }

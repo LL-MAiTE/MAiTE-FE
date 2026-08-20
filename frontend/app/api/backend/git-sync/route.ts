@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureBackendProjectId, createBackendConnection, syncBackendConnection } from "@/lib/backendApi";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -27,10 +28,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
-    const backendProjectId = await ensureBackendProjectId(body.localProjectId, body.projectName);
-    const connection = await createBackendConnection(backendProjectId, body.repo, body.accessToken);
-    const result = await syncBackendConnection(connection.id);
+    const backendProjectId = await ensureBackendProjectId(token, body.localProjectId, body.projectName);
+    const connection = await createBackendConnection(token, backendProjectId, body.repo, body.accessToken);
+    const result = await syncBackendConnection(token, connection.id);
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

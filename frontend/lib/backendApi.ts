@@ -1,13 +1,17 @@
 /**
  * 서버 전용. 백엔드(Spring Boot, LL-MAiTE/MAiTE-BE)의 REST API를 직접 호출하는 얇은 클라이언트.
  *
- * 지금 프론트는 로그인 화면이 없다 (해커톤용 스코프 축소 결정 — [[tkzr-scope-decisions]]).
- * 그래서 모든 호출에 고정 서비스 계정 JWT(BACKEND_API_TOKEN, 만료 7일)를 그대로 쓴다.
- * 실서비스 전환 시 이 토큰을 실제 로그인 흐름에서 나온 사용자 토큰으로 교체해야 한다.
+ * 모든 호출은 "누구 대신 부르는지"를 나타내는 사용자 JWT를 첫 인자(token)로 받는다.
+ * 이 토큰은 lib/session.ts의 httpOnly 쿠키(tkzr_session)에서 나온 실제 로그인 사용자의
+ * 토큰이다 — 예전엔 고정 서비스 계정 토큰(BACKEND_API_TOKEN) 하나로 모든 호출을
+ * 보냈는데, 그러면 로그인한 사람과 무관하게 항상 같은 계정의 데이터만 보이게 된다
+ * (GET /projects 같은 "내 것만" 엔드포인트가 무의미해짐). 호출부(app/api/backend/*
+ * 라우트 핸들러)가 `requireSessionToken()`으로 꺼낸 값을 여기로 그대로 전달한다.
  *
  * 프로젝트/회의 준비(Agenda·Position) CRUD는 여전히 프론트 mock(localStorage)이 원본이다 —
  * 라이브 미팅을 실제로 시작할 때만, 그 시점의 로컬 데이터를 백엔드에 "동기화"해서
  * Agora Conversational AI(백엔드가 소유)가 실제 DB 데이터를 보고 응답하게 만든다.
+ * (프로젝트 CRUD를 백엔드로 옮기는 작업은 [[tkzr-scope-decisions]] 참고 — 진행 중)
  */
 
 interface BackendEnvelope<T> {
@@ -23,11 +27,11 @@ function requireEnv(name: string): string {
 }
 
 async function backendFetch<T>(
+  token: string,
   path: string,
   init?: { method?: string; body?: unknown }
 ): Promise<T> {
   const baseUrl = requireEnv("BACKEND_BASE_URL").replace(/\/$/, "");
-  const token = requireEnv("BACKEND_API_TOKEN");
 
   const res = await fetch(`${baseUrl}${path}`, {
     method: init?.method ?? "GET",
@@ -57,8 +61,8 @@ export interface BackendProject {
   name: string;
 }
 
-export async function createBackendProject(name: string): Promise<BackendProject> {
-  return backendFetch<BackendProject>("/projects", { method: "POST", body: { name } });
+export async function createBackendProject(token: string, name: string): Promise<BackendProject> {
+  return backendFetch<BackendProject>(token, "/projects", { method: "POST", body: { name } });
 }
 
 /**
@@ -66,11 +70,15 @@ export async function createBackendProject(name: string): Promise<BackendProject
  * 그대로 재사용하고, 없으면 지금 만들고 링크를 저장한다. sync-meeting/project-members/
  * git-sync 세 경로가 전부 이 함수 하나를 공유해서 중복 생성을 막는다.
  */
-export async function ensureBackendProjectId(localProjectId: string, projectName: string): Promise<string> {
+export async function ensureBackendProjectId(
+  token: string,
+  localProjectId: string,
+  projectName: string
+): Promise<string> {
   const { getBackendProjectId, saveBackendProjectId } = await import("./backendMeetingLinkStore");
   const existing = getBackendProjectId(localProjectId);
   if (existing) return existing;
-  const project = await createBackendProject(projectName);
+  const project = await createBackendProject(token, projectName);
   saveBackendProjectId(localProjectId, project.id);
   return project.id;
 }
@@ -82,13 +90,16 @@ export interface BackendAgenda {
   status: string;
 }
 
-export async function createBackendAgenda(input: {
-  projectId: string;
-  title: string;
-  purpose: string;
-  counterpartInfo: string;
-}): Promise<BackendAgenda> {
-  return backendFetch<BackendAgenda>("/agendas", {
+export async function createBackendAgenda(
+  token: string,
+  input: {
+    projectId: string;
+    title: string;
+    purpose: string;
+    counterpartInfo: string;
+  }
+): Promise<BackendAgenda> {
+  return backendFetch<BackendAgenda>(token, "/agendas", {
     method: "POST",
     body: {
       projectId: input.projectId,
@@ -108,6 +119,7 @@ export interface BackendPosition {
 }
 
 export async function addAndApproveBackendPosition(
+  token: string,
   agendaId: string,
   position: {
     topic: string;
@@ -120,11 +132,11 @@ export async function addAndApproveBackendPosition(
     scheduleConstraint: string | null;
   }
 ): Promise<BackendPosition> {
-  const created = await backendFetch<BackendPosition>(`/agendas/${agendaId}/positions`, {
+  const created = await backendFetch<BackendPosition>(token, `/agendas/${agendaId}/positions`, {
     method: "POST",
     body: position,
   });
-  return backendFetch<BackendPosition>(`/positions/${created.id}/approve`, {
+  return backendFetch<BackendPosition>(token, `/positions/${created.id}/approve`, {
     method: "POST",
     body: { approvalStatus: "APPROVED" },
   });
@@ -140,8 +152,8 @@ export interface BackendMeeting {
   status: string;
 }
 
-export async function createBackendMeeting(agendaId: string): Promise<BackendMeeting> {
-  return backendFetch<BackendMeeting>(`/agendas/${agendaId}/meetings`, { method: "POST" });
+export async function createBackendMeeting(token: string, agendaId: string): Promise<BackendMeeting> {
+  return backendFetch<BackendMeeting>(token, `/agendas/${agendaId}/meetings`, { method: "POST" });
 }
 
 export interface BackendMeetingStartResult {
@@ -156,12 +168,15 @@ export interface BackendMeetingStartResult {
   agoraAgentUid: number;
 }
 
-export async function startBackendMeeting(meetingId: string): Promise<BackendMeetingStartResult> {
-  return backendFetch<BackendMeetingStartResult>(`/meetings/${meetingId}/start`, { method: "POST" });
+export async function startBackendMeeting(
+  token: string,
+  meetingId: string
+): Promise<BackendMeetingStartResult> {
+  return backendFetch<BackendMeetingStartResult>(token, `/meetings/${meetingId}/start`, { method: "POST" });
 }
 
-export async function endBackendMeeting(meetingId: string): Promise<void> {
-  await backendFetch<{ success: boolean }>(`/meetings/${meetingId}/end`, { method: "POST" });
+export async function endBackendMeeting(token: string, meetingId: string): Promise<void> {
+  await backendFetch<{ success: boolean }>(token, `/meetings/${meetingId}/end`, { method: "POST" });
 }
 
 export interface BackendTranscript {
@@ -179,8 +194,8 @@ export interface BackendTranscript {
  * 실시간 저장해둔 원문 대화(양쪽 발화)를 가져온다. 라이브 화면이 3초 간격으로 폴링해서
  * "실시간 대화" 패널에 실제 음성 협상 내용을 보여주는 데 쓴다.
  */
-export async function getBackendTranscripts(meetingId: string): Promise<BackendTranscript[]> {
-  return backendFetch<BackendTranscript[]>(`/meetings/${meetingId}/transcripts`);
+export async function getBackendTranscripts(token: string, meetingId: string): Promise<BackendTranscript[]> {
+  return backendFetch<BackendTranscript[]>(token, `/meetings/${meetingId}/transcripts`);
 }
 
 // ---------------------------------------------------------------------------
@@ -196,16 +211,16 @@ export interface BackendNotification {
   createdAt: string;
 }
 
-export async function listBackendNotifications(): Promise<BackendNotification[]> {
-  return backendFetch<BackendNotification[]>("/notifications");
+export async function listBackendNotifications(token: string): Promise<BackendNotification[]> {
+  return backendFetch<BackendNotification[]>(token, "/notifications");
 }
 
-export async function markBackendNotificationRead(id: string): Promise<void> {
-  await backendFetch(`/notifications/${id}/read`, { method: "PATCH" });
+export async function markBackendNotificationRead(token: string, id: string): Promise<void> {
+  await backendFetch(token, `/notifications/${id}/read`, { method: "PATCH" });
 }
 
-export async function markAllBackendNotificationsRead(): Promise<void> {
-  await backendFetch("/notifications/read-all", { method: "PATCH" });
+export async function markAllBackendNotificationsRead(token: string): Promise<void> {
+  await backendFetch(token, "/notifications/read-all", { method: "PATCH" });
 }
 
 // ---------------------------------------------------------------------------
@@ -218,11 +233,11 @@ export interface BackendUser {
   name: string;
 }
 
-/** 이메일로 사용자를 찾는다 — 상대가 백엔드에 이미 회원가입돼 있어야 한다(로그인 화면이
- * 없는 이번 스코프에선 초대 전에 미리 회원가입해두라고 안내해야 함). 없으면 null. */
-export async function searchBackendUserByEmail(email: string): Promise<BackendUser | null> {
+/** 이메일로 사용자를 찾는다 — 상대가 백엔드에 이미 회원가입돼 있어야 한다(초대 전에
+ * 미리 회원가입해두라고 안내해야 함). 없으면 null. */
+export async function searchBackendUserByEmail(token: string, email: string): Promise<BackendUser | null> {
   try {
-    return await backendFetch<BackendUser>(`/users?email=${encodeURIComponent(email)}`);
+    return await backendFetch<BackendUser>(token, `/users?email=${encodeURIComponent(email)}`);
   } catch {
     return null;
   }
@@ -236,16 +251,20 @@ export interface BackendProjectMember {
   role: string;
 }
 
-export async function listBackendProjectMembers(backendProjectId: string): Promise<BackendProjectMember[]> {
-  return backendFetch<BackendProjectMember[]>(`/projects/${backendProjectId}/members`);
+export async function listBackendProjectMembers(
+  token: string,
+  backendProjectId: string
+): Promise<BackendProjectMember[]> {
+  return backendFetch<BackendProjectMember[]>(token, `/projects/${backendProjectId}/members`);
 }
 
 export async function inviteBackendProjectMember(
+  token: string,
   backendProjectId: string,
   userId: string,
   role: "ANSWERER" | "QUESTIONER" | "TEAM_MANAGER"
 ): Promise<BackendProjectMember> {
-  return backendFetch<BackendProjectMember>(`/projects/${backendProjectId}/members`, {
+  return backendFetch<BackendProjectMember>(token, `/projects/${backendProjectId}/members`, {
     method: "POST",
     body: { userId, role },
   });
@@ -262,11 +281,12 @@ export interface BackendConnection {
 }
 
 export async function createBackendConnection(
+  token: string,
   backendProjectId: string,
   repo: string,
   accessToken: string
 ): Promise<BackendConnection> {
-  return backendFetch<BackendConnection>(`/projects/${backendProjectId}/connections`, {
+  return backendFetch<BackendConnection>(token, `/projects/${backendProjectId}/connections`, {
     method: "POST",
     body: { type: "GIT", workspaceOrRepoName: repo, accessToken },
   });
@@ -277,8 +297,8 @@ export interface BackendSyncResult {
   latestFiles: string[];
 }
 
-export async function syncBackendConnection(connectionId: string): Promise<BackendSyncResult> {
-  return backendFetch<BackendSyncResult>(`/connections/${connectionId}/sync`, { method: "POST" });
+export async function syncBackendConnection(token: string, connectionId: string): Promise<BackendSyncResult> {
+  return backendFetch<BackendSyncResult>(token, `/connections/${connectionId}/sync`, { method: "POST" });
 }
 
 // ---------------------------------------------------------------------------
@@ -295,20 +315,23 @@ export interface BackendDocument {
   syncedAt: string | null;
 }
 
-export async function listBackendDocuments(backendProjectId: string): Promise<BackendDocument[]> {
-  return backendFetch<BackendDocument[]>(`/projects/${backendProjectId}/documents`);
+export async function listBackendDocuments(
+  token: string,
+  backendProjectId: string
+): Promise<BackendDocument[]> {
+  return backendFetch<BackendDocument[]>(token, `/projects/${backendProjectId}/documents`);
 }
 
 export interface BackendDocumentDetail extends BackendDocument {
   content: string | null;
 }
 
-export async function getBackendDocument(documentId: string): Promise<BackendDocumentDetail> {
-  return backendFetch<BackendDocumentDetail>(`/documents/${documentId}`);
+export async function getBackendDocument(token: string, documentId: string): Promise<BackendDocumentDetail> {
+  return backendFetch<BackendDocumentDetail>(token, `/documents/${documentId}`);
 }
 
 /** 안건의 참조 문서로 이미 쓰이고 있으면 백엔드가 409(DOCUMENT_IN_USE)로 거부한다 —
  * backendFetch가 이 경우 message를 그대로 Error로 던지므로 호출부에서 안내하면 된다. */
-export async function deleteBackendDocument(documentId: string): Promise<void> {
-  await backendFetch(`/documents/${documentId}`, { method: "DELETE" });
+export async function deleteBackendDocument(token: string, documentId: string): Promise<void> {
+  await backendFetch(token, `/documents/${documentId}`, { method: "DELETE" });
 }

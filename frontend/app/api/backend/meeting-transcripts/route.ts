@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendTranscripts } from "@/lib/backendApi";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -15,8 +16,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "backendMeetingId가 필요합니다." }, { status: 400 });
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
-    const transcripts = await getBackendTranscripts(backendMeetingId);
+    const transcripts = await getBackendTranscripts(token, backendMeetingId);
     return NextResponse.json({ transcripts });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

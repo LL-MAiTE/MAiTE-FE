@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listBackendDocuments } from "@/lib/backendApi";
 import { getBackendProjectId } from "@/lib/backendMeetingLinkStore";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -21,8 +22,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ documents: [] });
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
-    const documents = await listBackendDocuments(backendProjectId);
+    const documents = await listBackendDocuments(token, backendProjectId);
     return NextResponse.json({ documents });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

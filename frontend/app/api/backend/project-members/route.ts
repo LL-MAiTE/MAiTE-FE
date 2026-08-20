@@ -6,6 +6,7 @@ import {
   listBackendProjectMembers,
 } from "@/lib/backendApi";
 import { getBackendProjectId } from "@/lib/backendMeetingLinkStore";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -25,8 +26,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ members: [], synced: false });
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
-    const members = await listBackendProjectMembers(backendProjectId);
+    const members = await listBackendProjectMembers(token, backendProjectId);
     return NextResponse.json({ members, synced: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -38,9 +44,8 @@ export async function GET(req: NextRequest) {
  * POST /api/backend/project-members
  * body: { localProjectId, projectName, email, role }
  *
- * 상대가 백엔드에 이미 회원가입돼 있어야 초대할 수 있다 — 이 프론트엔 로그인/회원가입
- * 화면이 없어서([[tkzr-scope-decisions]]), 초대받을 사람은 다른 경로(백엔드 test 화면 등)로
- * 미리 가입해둬야 한다. 못 찾으면 그 사실을 그대로 에러로 돌려준다.
+ * 상대가 백엔드에 이미 (/signup으로) 회원가입돼 있어야 초대할 수 있다 — 이메일로
+ * 조회해서 없으면 그 사실을 그대로 에러로 돌려준다.
  */
 export async function POST(req: NextRequest) {
   let body: { localProjectId?: string; projectName?: string; email?: string; role?: string };
@@ -56,8 +61,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
-    const user = await searchBackendUserByEmail(body.email);
+    const user = await searchBackendUserByEmail(token, body.email);
     if (!user) {
       return NextResponse.json(
         { error: `"${body.email}"로 가입된 사용자를 찾을 수 없습니다. 먼저 백엔드에 회원가입이 필요합니다.` },
@@ -65,8 +75,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const backendProjectId = await ensureBackendProjectId(body.localProjectId, body.projectName);
+    const backendProjectId = await ensureBackendProjectId(token, body.localProjectId, body.projectName);
     const member = await inviteBackendProjectMember(
+      token,
       backendProjectId,
       user.id,
       body.role as "ANSWERER" | "QUESTIONER" | "TEAM_MANAGER"

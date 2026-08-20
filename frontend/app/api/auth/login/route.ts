@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { setSessionCookie } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -18,20 +19,22 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}/auth/login`, {
+    const backendRes = await fetch(`${baseUrl.replace(/\/$/, "")}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: body.email, password: body.password }),
       cache: "no-store",
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) {
+    const data = await backendRes.json().catch(() => ({}));
+    if (!backendRes.ok || !data.success) {
       return NextResponse.json(
-        { error: data.message ?? `로그인에 실패했습니다 (HTTP ${res.status})` },
-        { status: res.status }
+        { error: data.message ?? `로그인에 실패했습니다 (HTTP ${backendRes.status})` },
+        { status: backendRes.status }
       );
     }
-    return NextResponse.json({ token: data.data.token, user: data.data.user });
+    const res = NextResponse.json({ token: data.data.token, user: data.data.user });
+    setSessionCookie(res, data.data.token);
+    return res;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 502 });

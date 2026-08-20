@@ -6,6 +6,7 @@ import {
   createBackendMeeting,
 } from "@/lib/backendApi";
 import { getBackendLink, saveBackendLink } from "@/lib/backendMeetingLinkStore";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -53,11 +54,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ backendMeetingId: existing.backendMeetingId, reused: true });
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
     // 프로젝트도 로컬 mock이라 백엔드에 대응 레코드가 없다 — 없으면 먼저 만들고 링크 저장.
-    const backendProjectId = await ensureBackendProjectId(body.projectId, body.projectName);
+    const backendProjectId = await ensureBackendProjectId(token, body.projectId, body.projectName);
 
-    const agenda = await createBackendAgenda({
+    const agenda = await createBackendAgenda(token, {
       projectId: backendProjectId,
       title: body.title,
       purpose: body.purpose,
@@ -68,14 +74,14 @@ export async function POST(req: NextRequest) {
     // 하나 실패해도 나머지는 계속 진행 — 매칭 대상이 하나라도 남는 게 전부 실패보다 낫다.
     for (const position of body.approvedPositions) {
       try {
-        await addAndApproveBackendPosition(agenda.id, position);
+        await addAndApproveBackendPosition(token, agenda.id, position);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(`[sync-meeting] 안건 "${position.topic}" 동기화 실패:`, err);
       }
     }
 
-    const meeting = await createBackendMeeting(agenda.id);
+    const meeting = await createBackendMeeting(token, agenda.id);
     saveBackendLink(body.localMeetingId, {
       backendAgendaId: agenda.id,
       backendMeetingId: meeting.id,

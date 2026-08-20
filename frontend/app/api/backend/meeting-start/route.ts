@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { startBackendMeeting } from "@/lib/backendApi";
+import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
@@ -22,8 +23,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "backendMeetingId가 필요합니다." }, { status: 400 });
   }
 
+  const token = getSessionToken();
+  if (!token) {
+    return NextResponse.json({ error: "로그인이 필요합니다." }, { status: 401 });
+  }
+
   try {
-    const result = await startBackendMeeting(body.backendMeetingId);
+    const result = await startBackendMeeting(token, body.backendMeetingId);
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
