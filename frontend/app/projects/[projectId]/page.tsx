@@ -40,7 +40,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export default function ProjectDetailPage({ params }: { params: { projectId: string } }) {
-  const { getProject, getMeetingsByProject, addDocument, deleteMeeting } = useStore();
+  const { getProject, getMeetingsByProject, addDocument, deleteDocument, deleteMeeting } = useStore();
   const project = getProject(params.projectId);
   const meetings = getMeetingsByProject(params.projectId);
 
@@ -74,6 +74,9 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [expandedContent, setExpandedContent] = useState<string | null>(null);
   const [expandedLoading, setExpandedLoading] = useState(false);
   const [docActionError, setDocActionError] = useState<string | null>(null);
+
+  // 로컬(mock) 문서 목록 — 클릭 시 전체 내용 펼쳐보기 (이미 로컬에 다 있어서 API 호출 불필요)
+  const [expandedLocalDocId, setExpandedLocalDocId] = useState<string | null>(null);
 
   const fetchBackendDocuments = async (projectId: string) => {
     try {
@@ -128,6 +131,10 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     }
   };
 
+  const handleToggleLocalDoc = (docId: string) => {
+    setExpandedLocalDocId((prev) => (prev === docId ? null : docId));
+  };
+
   const fetchMembers = async (projectId: string) => {
     setMembersLoading(true);
     try {
@@ -174,6 +181,12 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     setContent("");
     setIsCoreContext(false);
     setShowUpload(false);
+  };
+
+  const handleDeleteLocalDoc = (docId: string) => {
+    if (!confirm("이 문서를 삭제할까요?")) return;
+    deleteDocument(project.id, docId);
+    if (expandedLocalDocId === docId) setExpandedLocalDocId(null);
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -606,7 +619,20 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
             project.documents.map((doc) => (
               <Card key={doc.id}>
                 <div className="row-between">
-                  <div className="row" style={{ alignItems: "flex-start" }}>
+                  <button
+                    type="button"
+                    onClick={() => handleToggleLocalDoc(doc.id)}
+                    className="row"
+                    style={{
+                      alignItems: "flex-start",
+                      flex: 1,
+                      textAlign: "left",
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                    }}
+                  >
                     <span className="list-row-icon">
                       <img src="/icons/icon-document.svg" alt="" width={16} height={16} />
                     </span>
@@ -620,9 +646,32 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                         {doc.content.length > 120 ? "…" : ""}
                       </p>
                     </div>
+                  </button>
+                  <div className="row" style={{ alignItems: "flex-start", gap: 8 }}>
+                    <span className="muted">{new Date(doc.updatedAt).toLocaleDateString("ko-KR")}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
+                      onClick={() => handleDeleteLocalDoc(doc.id)}
+                    >
+                      삭제
+                    </button>
                   </div>
-                  <span className="muted">{new Date(doc.updatedAt).toLocaleDateString("ko-KR")}</span>
                 </div>
+                {expandedLocalDocId === doc.id && (
+                  <pre
+                    style={{
+                      marginTop: 8,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      fontSize: 13,
+                      maxHeight: 320,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {doc.content}
+                  </pre>
+                )}
               </Card>
             ))
           )}
