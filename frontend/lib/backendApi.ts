@@ -280,3 +280,35 @@ export interface BackendSyncResult {
 export async function syncBackendConnection(connectionId: string): Promise<BackendSyncResult> {
   return backendFetch<BackendSyncResult>(`/connections/${connectionId}/sync`, { method: "POST" });
 }
+
+// ---------------------------------------------------------------------------
+// 문서 (Git/Notion 동기화 결과 조회·삭제) — 백엔드에 단건 조회/삭제 API가
+// 새로 생겨서(GET·DELETE /documents/:id) 연결한다. 목록 API는 무거운 content를
+// 안 주기 때문에, 본문은 클릭 시점에 단건 조회로 따로 받아온다.
+// ---------------------------------------------------------------------------
+
+export interface BackendDocument {
+  id: string;
+  title: string;
+  path: string | null;
+  isCoreContext: boolean;
+  syncedAt: string | null;
+}
+
+export async function listBackendDocuments(backendProjectId: string): Promise<BackendDocument[]> {
+  return backendFetch<BackendDocument[]>(`/projects/${backendProjectId}/documents`);
+}
+
+export interface BackendDocumentDetail extends BackendDocument {
+  content: string | null;
+}
+
+export async function getBackendDocument(documentId: string): Promise<BackendDocumentDetail> {
+  return backendFetch<BackendDocumentDetail>(`/documents/${documentId}`);
+}
+
+/** 안건의 참조 문서로 이미 쓰이고 있으면 백엔드가 409(DOCUMENT_IN_USE)로 거부한다 —
+ * backendFetch가 이 경우 message를 그대로 Error로 던지므로 호출부에서 안내하면 된다. */
+export async function deleteBackendDocument(documentId: string): Promise<void> {
+  await backendFetch(`/documents/${documentId}`, { method: "DELETE" });
+}

@@ -66,6 +66,68 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [gitError, setGitError] = useState<string | null>(null);
   const [gitResult, setGitResult] = useState<{ syncedCount: number; latestFiles: string[] } | null>(null);
 
+  // 연동 문서(Git/Notion) 목록 — 백엔드에 실제로 동기화된 문서를 조회/삭제
+  const [backendDocs, setBackendDocs] = useState<
+    { id: string; title: string; path: string | null }[]
+  >([]);
+  const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
+  const [expandedContent, setExpandedContent] = useState<string | null>(null);
+  const [expandedLoading, setExpandedLoading] = useState(false);
+  const [docActionError, setDocActionError] = useState<string | null>(null);
+
+  const fetchBackendDocuments = async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/backend/documents?localProjectId=${projectId}`);
+      const data = await res.json();
+      if (res.ok) setBackendDocs(data.documents ?? []);
+    } catch {
+      // 이 섹션은 옵셔널(아직 연동 안 했으면 빈 목록) — 실패해도 조용히 넘어감
+    }
+  };
+
+  useEffect(() => {
+    if (project) fetchBackendDocuments(project.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
+
+  const handleToggleDocPreview = async (docId: string) => {
+    if (expandedDocId === docId) {
+      setExpandedDocId(null);
+      setExpandedContent(null);
+      return;
+    }
+    setExpandedDocId(docId);
+    setExpandedContent(null);
+    setExpandedLoading(true);
+    try {
+      const res = await fetch(`/api/backend/documents/${docId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setExpandedContent(data.document?.content ?? "(내용 없음)");
+    } catch (err) {
+      setExpandedContent(`내용을 불러오지 못했습니다: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExpandedLoading(false);
+    }
+  };
+
+  const handleDeleteBackendDoc = async (docId: string) => {
+    if (!confirm("이 문서를 삭제할까요?")) return;
+    setDocActionError(null);
+    try {
+      const res = await fetch(`/api/backend/documents/${docId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      setBackendDocs((prev) => prev.filter((d) => d.id !== docId));
+      if (expandedDocId === docId) {
+        setExpandedDocId(null);
+        setExpandedContent(null);
+      }
+    } catch (err) {
+      setDocActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const fetchMembers = async (projectId: string) => {
     setMembersLoading(true);
     try {
@@ -162,6 +224,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setGitResult(data);
       setGitToken("");
+      fetchBackendDocuments(project.id);
     } catch (err) {
       setGitError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -426,12 +489,58 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                 {gitResult && (
                   <p className="field-hint" style={{ marginTop: 8 }}>
                     {gitResult.syncedCount}개 파일 동기화됨: {gitResult.latestFiles.join(", ")}
-                    <br />
-                    (백엔드 DB에 저장됨 — 이 화면 문서 목록엔 아직 자동으로 합쳐지지 않습니다.
-                    백엔드에 문서 단건 조회 API가 추가되면 연결할 예정입니다.)
                   </p>
                 )}
               </form>
+            )}
+
+            {backendDocs.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <p className="field-hint" style={{ marginBottom: 8 }}>
+                  연동 문서 ({backendDocs.length}개) — 클릭하면 내용을 볼 수 있어요
+                </p>
+                {docActionError && (
+                  <p style={{ color: "var(--tone-danger-fg)", marginBottom: 8 }}>{docActionError}</p>
+                )}
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+                  {backendDocs.map((doc) => (
+                    <li key={doc.id} className="card" style={{ padding: 12 }}>
+                      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleDocPreview(doc.id)}
+                          className="btn btn-sm btn-ghost"
+                          style={{ flex: 1, textAlign: "left", justifyContent: "flex-start" }}
+                        >
+                          📄 {doc.title}
+                          {doc.path && doc.path !== doc.title ? ` (${doc.path})` : ""}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger"
+                          onClick={() => handleDeleteBackendDoc(doc.id)}
+                        >
+                          삭제
+                        </button>
+                      </div>
+                      {expandedDocId === doc.id && (
+                        <pre
+                          style={{
+                            marginTop: 8,
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                            fontSize: 13,
+                            maxHeight: 320,
+                            overflowY: "auto",
+                          }}
+                        >
+                          {expandedLoading ? "불러오는 중…" : expandedContent}
+                        </pre>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
 
             {showUpload && (
