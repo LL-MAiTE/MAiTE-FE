@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/authContext";
 
 /**
  * 공용 앱 셸 (탑바 + 사이드바 + 메인 콘텐츠 영역).
@@ -81,9 +82,17 @@ const NAV_ITEMS: {
   },
 ];
 
+const AUTH_PATHS = ["/login", "/signup"];
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { projects, meetings } = useStore();
+  const { user, logout } = useAuth();
   const pathname = usePathname();
+
+  // 로그인/회원가입 페이지는 셸 없이 렌더링
+  if (AUTH_PATHS.includes(pathname ?? "")) {
+    return <>{children}</>;
+  }
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -216,9 +225,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <aside className="app-sidebar">
           <div className="app-sidebar-profile-wrap">
             <div className="app-sidebar-profile">
-              <div className="app-sidebar-avatar">재</div>
-              <div className="app-sidebar-name">재현</div>
-              <div className="app-sidebar-role">Product Manager</div>
+              <div className="app-sidebar-avatar">
+                {user?.name ? user.name.charAt(0) : "?"}
+              </div>
+              <div className="app-sidebar-name">{user?.name ?? "—"}</div>
+              <div className="app-sidebar-role">{user?.email ?? ""}</div>
               <div className="app-sidebar-status">
                 <span className="app-sidebar-status-dot" />
                 활동 중
@@ -233,6 +244,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <span>완료 회의</span>
                 </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ marginTop: 8, width: "100%", color: "var(--color-text-muted)" }}
+                onClick={logout}
+              >
+                로그아웃
+              </button>
             </div>
           </div>
 

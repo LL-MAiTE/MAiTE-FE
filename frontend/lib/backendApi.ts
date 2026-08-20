@@ -1,14 +1,14 @@
 /**
  * 서버 전용. 백엔드(Spring Boot, LL-MAiTE/MAiTE-BE)의 REST API를 직접 호출하는 얇은 클라이언트.
  *
- * 지금 프론트는 로그인 화면이 없다 (해커톤용 스코프 축소 결정 — [[tkzr-scope-decisions]]).
- * 그래서 모든 호출에 고정 서비스 계정 JWT(BACKEND_API_TOKEN, 만료 7일)를 그대로 쓴다.
- * 실서비스 전환 시 이 토큰을 실제 로그인 흐름에서 나온 사용자 토큰으로 교체해야 한다.
+ * 인증 토큰 우선순위: maite_token 쿠키(로그인한 사용자) > BACKEND_API_TOKEN 환경변수(서비스 계정 폴백).
  *
  * 프로젝트/회의 준비(Agenda·Position) CRUD는 여전히 프론트 mock(localStorage)이 원본이다 —
  * 라이브 미팅을 실제로 시작할 때만, 그 시점의 로컬 데이터를 백엔드에 "동기화"해서
  * Agora Conversational AI(백엔드가 소유)가 실제 DB 데이터를 보고 응답하게 만든다.
  */
+
+import { cookies } from "next/headers";
 
 interface BackendEnvelope<T> {
   success: boolean;
@@ -22,12 +22,23 @@ function requireEnv(name: string): string {
   return value;
 }
 
+async function resolveToken(): Promise<string> {
+  try {
+    const cookieStore = await cookies();
+    const userToken = cookieStore.get("maite_token")?.value;
+    if (userToken) return userToken;
+  } catch {
+    // cookies()가 요청 컨텍스트 밖에서 호출된 경우 무시
+  }
+  return requireEnv("BACKEND_API_TOKEN");
+}
+
 async function backendFetch<T>(
   path: string,
   init?: { method?: string; body?: unknown }
 ): Promise<T> {
   const baseUrl = requireEnv("BACKEND_BASE_URL").replace(/\/$/, "");
-  const token = requireEnv("BACKEND_API_TOKEN");
+  const token = await resolveToken();
 
   const res = await fetch(`${baseUrl}${path}`, {
     method: init?.method ?? "GET",

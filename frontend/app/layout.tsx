@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { StoreProvider } from "@/lib/store";
+import { AuthProvider } from "@/lib/authContext";
 import { AppShell } from "@/components/AppShell";
 import "./globals.css";
 
@@ -12,9 +13,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ko">
       <body>
-        <StoreProvider>
-          <AppShell>{children}</AppShell>
-        </StoreProvider>
+        <AuthProvider>
+          <StoreProvider>
+            <AppShell>{children}</AppShell>
+          </StoreProvider>
+        </AuthProvider>
       </body>
     </html>
   );

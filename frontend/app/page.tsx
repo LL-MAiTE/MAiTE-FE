@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/authContext";
 import { Card, EmptyState } from "@/components/Card";
 import { MeetingStatusBadge } from "@/components/Badge";
 
@@ -20,6 +21,7 @@ import { MeetingStatusBadge } from "@/components/Badge";
  */
 export default function HomeDashboardPage() {
   const { projects, meetings, getMeetingsByProject, createProject, deleteProject } = useStore();
+  const { user } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -60,7 +62,7 @@ export default function HomeDashboardPage() {
     <div>
       <div className="page-header">
         <h1>대시보드</h1>
-        <p className="muted">안녕하세요, 재현님! 오늘도 효율적인 협업을 시작해보세요 👋</p>
+        <p className="muted">안녕하세요, {user?.name ?? ""}님! 오늘도 효율적인 협업을 시작해보세요 👋</p>
       </div>
 
       <div className="dashboard-grid">
