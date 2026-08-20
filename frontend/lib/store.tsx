@@ -210,7 +210,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) setState(JSON.parse(raw) as StoreState);
+      if (raw) {
+        const parsed = JSON.parse(raw) as StoreState;
+        // 예전에 lib/mockSeed.ts가 브라우저에 심어둔 데모 프로젝트("project_dashboard",
+        // id가 고정 문자열)가 이미 localStorage에 저장돼 있으면, mock 시드를 지운 뒤에도
+        // 계속 남아 보인다 — 여기서 한 번 걸러낸다. 실제로 만든 프로젝트는 genId()가
+        // 생성한 다른 형식의 id를 쓰므로 이 필터에 걸리지 않는다.
+        parsed.projects = parsed.projects.filter((p) => p.id !== "project_dashboard");
+        parsed.meetings = parsed.meetings.filter((m) => m.projectId !== "project_dashboard");
+        setState(parsed);
+      }
     } catch {
       // 저장된 값이 깨졌으면 seed로 계속 진행
     }
