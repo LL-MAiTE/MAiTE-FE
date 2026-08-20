@@ -103,8 +103,13 @@ export async function createBackendAgenda(
     title: string;
     purpose: string;
     counterpartInfo: string;
+    /** BCP-47 언어 코드(예: "en-US"). 라이브 통화의 ASR/TTS/LLM 응답 언어를 정하는 데
+     * 쓰인다 — 예전엔 여기가 항상 "ko-KR"로 고정돼 있어서, 위저드에서 "영어"를 골라도
+     * 실제 통화는 한국어로 진행되는 버그가 있었다(실사용 중 발견). */
+    counterpartLanguageCode?: string;
   }
 ): Promise<BackendAgenda> {
+  const language = input.counterpartLanguageCode ?? "ko-KR";
   return backendFetch<BackendAgenda>(token, "/agendas", {
     method: "POST",
     body: {
@@ -113,8 +118,8 @@ export async function createBackendAgenda(
       purpose: input.purpose,
       // 프론트는 아직 국가/언어를 분리 입력받지 않아서, 자유 텍스트를 그대로 넣는다 (손실 있는 매핑).
       counterpartCountry: input.counterpartInfo,
-      counterpartLanguage: "ko-KR",
-      transcriptLanguages: ["ko-KR"],
+      counterpartLanguage: language,
+      transcriptLanguages: [language],
     },
   });
 }

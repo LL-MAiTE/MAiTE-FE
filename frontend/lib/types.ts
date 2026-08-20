@@ -91,7 +91,11 @@ export interface Meeting {
   projectId: string;
   title: string;
   purpose: string;
-  counterpartInfo: string; // 국가/언어/소속 등 자유 텍스트
+  counterpartInfo: string; // 국가/언어/소속 등 자유 텍스트 (AI 안건 생성 프롬프트 컨텍스트용)
+  // 상대방이 실제로 쓰는 언어의 BCP-47 코드(예: "en-US", "ja-JP"). 라이브 통화의
+  // ASR/TTS/LLM 응답 언어를 결정하는 데 쓰인다(counterpartInfo는 자유 텍스트라 이
+  // 목적엔 못 씀) — 기본값 "ko-KR". [[tkzr-scope-decisions]]
+  counterpartLanguageCode: string;
   // 회의 생성 시 필수로 최소 1개 선택. 문서가 이제 전부 백엔드 원본이라(수동 업로드든
   // Git 연동이든 동일한 source_document) 문서 출처 구분 없이 id만 담는다 — 내용은
   // store가 필요할 때(안건 생성 직전) /api/backend/documents/:id로 가져온다.

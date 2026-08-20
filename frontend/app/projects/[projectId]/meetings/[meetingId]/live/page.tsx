@@ -262,6 +262,7 @@ export default function LiveMeetingPage({
           title: meeting.title,
           purpose: meeting.purpose,
           counterpartInfo: meeting.counterpartInfo,
+          counterpartLanguageCode: meeting.counterpartLanguageCode,
           approvedPositions: approvedPositions.map((p) => ({
             topic: p.topic,
             questionText: p.questionText,

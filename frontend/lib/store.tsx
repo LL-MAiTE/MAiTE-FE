@@ -159,6 +159,7 @@ interface StoreContextValue {
     title: string;
     purpose: string;
     counterpartInfo: string;
+    counterpartLanguageCode?: string;
     selectedDocumentIds: string[];
   }) => Promise<Meeting>;
   deleteMeeting: (meetingId: string) => void;
@@ -420,6 +421,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       title: string;
       purpose: string;
       counterpartInfo: string;
+      counterpartLanguageCode?: string;
       selectedDocumentIds: string[];
     }): Promise<Meeting> => {
       const documents = await resolveSourceDocs(input.selectedDocumentIds);
@@ -443,6 +445,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         title: input.title,
         purpose: input.purpose,
         counterpartInfo: input.counterpartInfo,
+        counterpartLanguageCode: input.counterpartLanguageCode ?? "ko-KR",
         selectedDocumentIds: input.selectedDocumentIds,
         status: "승인대기",
         positions,

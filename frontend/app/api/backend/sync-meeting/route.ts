@@ -23,6 +23,8 @@ interface SyncRequestBody {
   title: string;
   purpose: string;
   counterpartInfo: string;
+  /** BCP-47 코드(예: "en-US") — 회의 생성 위저드에서 고른 상대방 언어. */
+  counterpartLanguageCode?: string;
   approvedPositions: SyncPosition[];
 }
 
@@ -60,6 +62,7 @@ export async function POST(req: NextRequest) {
       title: body.title,
       purpose: body.purpose,
       counterpartInfo: body.counterpartInfo,
+      counterpartLanguageCode: body.counterpartLanguageCode,
     });
 
     // 승인된 안건들을 순서대로 백엔드에 추가 + 즉시 승인 처리.

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
@@ -27,6 +27,17 @@ import { Meeting } from "@/lib/types";
 const COUNTRIES = ["미국", "일본", "독일", "영국", "중국", "프랑스", "싱가포르"];
 const LANGUAGES = ["영어", "일본어", "독일어", "중국어", "프랑스어"];
 
+// 라이브 통화의 ASR/TTS/LLM 응답 언어를 실제로 결정하는 BCP-47 코드. LANGUAGES 칩은
+// 화면 표시용 한글 라벨이라 값 자체로는 Deepgram/MiniMax에 못 넘기므로 따로 매핑해둔다.
+const LANGUAGE_CODES: Record<string, string> = {
+  영어: "en-US",
+  일본어: "ja-JP",
+  독일어: "de-DE",
+  중국어: "zh-CN",
+  프랑스어: "fr-FR",
+};
+const DEFAULT_LANGUAGE_CODE = "ko-KR";
+
 const STEPS = [
   { n: 1, label: "회의 정보" },
   { n: 2, label: "상대방" },
@@ -50,7 +61,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
   const [country, setCountry] = useState<string | null>(null);
   const [language, setLanguage] = useState<string | null>(null);
   const [extraInfo, setExtraInfo] = useState("");
-  const [selectedIds, setSelectedIds] = useState<string[]>(coreDocs.map((d) => d.id));
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [createdMeeting, setCreatedMeeting] = useState<Meeting | null>(null);
 
@@ -59,6 +70,19 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
+  // 문서 목록은 refreshProjectDocuments가 마운트 후 비동기로 불러오기 때문에, 위
+  // useState(coreDocs.map(...))처럼 최초 렌더 시점에 한 번만 계산하면 그 시점엔 항상
+  // 빈 배열이라 "⭐ 핵심 문서 기본 선택"이 실제로는 절대 동작하지 않았다(실제 버그로
+  // 확인됨 — 문서를 선택했다고 생각했는데 반영이 안 되는 문제의 원인). 문서 목록이
+  // 로드된 뒤 core 문서를 한 번만 자동 선택하도록 고쳤다.
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current || !project || project.documents.length === 0) return;
+    const coreIds = project.documents.filter((d) => d.isCoreContext).map((d) => d.id);
+    if (coreIds.length > 0) setSelectedIds(coreIds);
+    autoSelectedRef.current = true;
+  }, [project]);
+
   if (!project) {
     return <EmptyState title="프로젝트를 찾을 수 없습니다" />;
   }
@@ -66,6 +90,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
   const counterpartInfo = [country, language && `${language} 사용`, extraInfo.trim()]
     .filter(Boolean)
     .join(", ");
+  const counterpartLanguageCode = (language && LANGUAGE_CODES[language]) || DEFAULT_LANGUAGE_CODE;
 
   const toggleDoc = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -81,6 +106,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
           title: title.trim(),
           purpose: purpose.trim(),
           counterpartInfo,
+          counterpartLanguageCode,
           selectedDocumentIds: selectedIds,
         });
         setCreatedMeeting(meeting);
