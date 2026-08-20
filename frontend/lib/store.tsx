@@ -313,10 +313,20 @@ async function fetchAgendaAsMeeting(
       mapBackendRequiredReview(r, backendMeetingId, logCaptionById)
     );
 
+    // 백엔드 Meeting.status가 IN_PROGRESS라고 해서 "지금 이 순간 실제 통화 중"인 건
+    // 아니다(라이브 화면을 벗어나도 백엔드가 자동으로 CLOSED로 바꿔주진 않음) — 그래서
+    // 보류함 상태를 같이 보고 실제로 뭘 보여줘야 할지 다시 판단한다(recomputeStatus와
+    // 같은 규칙): 보류 중인 항목이 있으면 "후속답변대기", 보류 이력만 있고 전부
+    // 해소됐으면 "종료", 보류 자체가 없었으면 그때만 진짜 "라이브"로 본다.
     const meetingStatus = latestBackendMeeting.status as string;
-    if (meetingStatus === "IN_PROGRESS") status = "라이브";
-    else if (meetingStatus === "PENDING_FOLLOWUP") status = "후속답변대기";
-    else if (meetingStatus === "CLOSED") status = "종료";
+    const hasPendingHold = holdItems.some((h) => h.status === "보류" || h.status === "후속답변대기");
+    if (meetingStatus === "PENDING_FOLLOWUP" || hasPendingHold) {
+      status = "후속답변대기";
+    } else if (meetingStatus === "CLOSED" || holdItems.length > 0) {
+      status = "종료";
+    } else {
+      status = "라이브";
+    }
   }
 
   return {
