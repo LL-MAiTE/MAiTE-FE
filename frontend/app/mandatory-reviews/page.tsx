@@ -8,8 +8,9 @@ import { Badge, MandatoryReviewStatusBadge } from "@/components/Badge";
 import { MandatoryReviewItem, MandatoryReviewStatus } from "@/lib/types";
 
 /**
- * 전체 필수 검토 항목 모아보기. hold-items 페이지와 동일한 이유로 로컬(mock) 데이터
- * 기준이다 — 실제 확인 처리는 각 회의의 결과 검토 화면에서 한다.
+ * 전체 필수 검토 항목 모아보기. hold-items 페이지와 동일하게, 로그인 시 하이드레이션된
+ * `meeting.mandatoryReviewItems`를 모아서 보여준다(라이브를 시작한 회의는 실제 백엔드
+ * 값). 실제 확인 처리는 각 회의의 결과 검토 화면에서 한다.
  */
 
 type Tab = MandatoryReviewStatus | "전체";

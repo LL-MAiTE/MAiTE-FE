@@ -112,6 +112,12 @@ export async function listBackendAgendas(token: string, projectId: string): Prom
   return backendFetch<BackendAgenda[]>(token, `/projects/${projectId}/agendas`);
 }
 
+/** 회의(안건)를 자식 레코드 전체와 함께 지운다 — "회의 삭제" 버튼이 로컬 화면에서만
+ * 지우고 실제로는 안 지워서, 로그인할 때마다 다시 하이드레이션되어 되살아나던 문제 수정. */
+export async function deleteBackendAgenda(token: string, agendaId: string): Promise<void> {
+  await backendFetch(token, `/agendas/${agendaId}`, { method: "DELETE" });
+}
+
 export async function createBackendAgenda(
   token: string,
   input: {

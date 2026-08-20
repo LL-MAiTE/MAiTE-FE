@@ -32,6 +32,21 @@ const TABS: { key: MeetingStatus | "전체"; label: string }[] = [
 export default function AllMeetingsPage() {
   const { meetings, projects, deleteMeeting } = useStore();
   const [tab, setTab] = useState<MeetingStatus | "전체">("전체");
+  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
+  const [meetingActionError, setMeetingActionError] = useState<string | null>(null);
+
+  const handleDeleteMeeting = async (meetingId: string, title: string) => {
+    if (!window.confirm(`"${title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    setDeletingMeetingId(meetingId);
+    setMeetingActionError(null);
+    try {
+      await deleteMeeting(meetingId);
+    } catch (err) {
+      setMeetingActionError(err instanceof Error ? err.message : "회의 삭제에 실패했습니다.");
+    } finally {
+      setDeletingMeetingId(null);
+    }
+  };
 
   const filtered = useMemo(
     () => (tab === "전체" ? meetings : meetings.filter((m) => m.status === tab)),
@@ -63,6 +78,10 @@ export default function AllMeetingsPage() {
           + 새 회의 만들기
         </Link>
       </div>
+
+      {meetingActionError && (
+        <p className="field-hint" style={{ color: "var(--tone-danger-fg)" }}>{meetingActionError}</p>
+      )}
 
       <div className="tab-list">
         {TABS.map((t) => (
@@ -114,15 +133,14 @@ export default function AllMeetingsPage() {
                 type="button"
                 className="btn btn-ghost btn-sm"
                 title="회의 삭제"
+                disabled={deletingMeetingId === meeting.id}
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  if (window.confirm(`"${meeting.title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) {
-                    deleteMeeting(meeting.id);
-                  }
+                  handleDeleteMeeting(meeting.id, meeting.title);
                 }}
               >
-                삭제
+                {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
               </button>
             </Link>
           );

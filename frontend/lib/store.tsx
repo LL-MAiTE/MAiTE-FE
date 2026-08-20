@@ -356,6 +356,33 @@ async function fetchProjectMeetings(projectId: string, project: Project | undefi
   return Promise.all(agendas.map((agenda) => fetchAgendaAsMeeting(agenda, project)));
 }
 
+function mapBackendDocuments(rawDocuments: unknown[]): ProjectDocument[] {
+  return rawDocuments.map((raw) => {
+    const d = raw as {
+      id: string;
+      title: string;
+      path: string | null;
+      isCoreContext: boolean;
+      syncedAt: string | null;
+      lastModifiedAt: string | null;
+    };
+    return {
+      id: d.id,
+      title: d.title,
+      path: d.path,
+      isCoreContext: d.isCoreContext,
+      updatedAt: d.syncedAt ?? d.lastModifiedAt ?? new Date().toISOString(),
+    };
+  });
+}
+
+async function fetchProjectDocuments(projectId: string): Promise<ProjectDocument[]> {
+  const res = await fetch(`/api/backend/documents?projectId=${projectId}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "문서 목록을 불러오지 못했습니다.");
+  return mapBackendDocuments(body.documents ?? []);
+}
+
 function seedState(): StoreState {
   // 예전엔 여기서 데모용 mock 프로젝트/회의(lib/mockSeed.ts)를 채워서 시작했는데,
   // 이제 실제 로그인 계정이 있어서 매 계정이 남의 가짜 데모 데이터를 보게 되는 게
@@ -428,7 +455,7 @@ interface StoreContextValue {
     counterpartLanguageCode?: string;
     selectedDocumentIds: string[];
   }) => Promise<Meeting>;
-  deleteMeeting: (meetingId: string) => void;
+  deleteMeeting: (meetingId: string) => Promise<void>;
   regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
 
   approvePosition: (meetingId: string, positionId: string) => Promise<void>;
@@ -538,18 +565,24 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           return { ...prev, projects };
         });
 
-        // 프로젝트 목록을 받아온 김에 그 프로젝트들에 딸린 회의(안건)도 전부 백엔드
-        // 기준으로 다시 채운다 — 안 그러면 다른 브라우저/기기에서 로그인했을 때 이미
-        // 만든 회의가 하나도 안 보인다(회의 목록/보류함/필수검토 전역 화면 전부 포함).
-        // project를 안 넘겨서(문서 목록을 아직 안 가져온 시점) sourceDocumentTitle은
-        // 이 시점엔 비어 보일 수 있는데, 해당 프로젝트 상세로 들어가면 다시 채워진다.
-        const results = await Promise.allSettled(
-          backendProjects.map((bp) => fetchProjectMeetings(bp.id, undefined))
-        );
+        // 프로젝트 목록을 받아온 김에 그 프로젝트들에 딸린 문서·회의(안건)도 전부
+        // 백엔드 기준으로 다시 채운다 — 안 그러면 홈 대시보드("최근 문서 업데이트",
+        // "문서 N개" 배지)가 로그인 직후엔 항상 0으로 보이고, 다른 브라우저/기기에서
+        // 로그인했을 때 이미 만든 회의도 하나도 안 보인다(회의 목록/보류함/필수검토
+        // 전역 화면 전부 포함). documents를 회의보다 먼저 받아서 넘겨줘야
+        // sourceDocumentTitle까지 이 시점에 정확히 채워진다.
+        const [docResults, meetingResults] = await Promise.all([
+          Promise.allSettled(backendProjects.map((bp) => fetchProjectDocuments(bp.id))),
+          Promise.allSettled(backendProjects.map((bp) => fetchProjectMeetings(bp.id, undefined))),
+        ]);
         if (cancelled) return;
         setState((prev) => {
+          const documentsByProject = new Map<string, ProjectDocument[]>();
+          docResults.forEach((r, i) => {
+            if (r.status === "fulfilled") documentsByProject.set(backendProjects[i].id, r.value);
+          });
           const meetingsByProject = new Map<string, Meeting[]>();
-          results.forEach((r, i) => {
+          meetingResults.forEach((r, i) => {
             if (r.status === "fulfilled") meetingsByProject.set(backendProjects[i].id, r.value);
           });
           const untouched = prev.meetings.filter((m) => !meetingsByProject.has(m.projectId));
@@ -557,11 +590,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           return {
             ...prev,
             meetings: [...untouched, ...refreshed],
-            projects: prev.projects.map((p) =>
-              meetingsByProject.has(p.id)
-                ? { ...p, meetingIds: (meetingsByProject.get(p.id) ?? []).map((m) => m.id) }
-                : p
-            ),
+            projects: prev.projects.map((p) => ({
+              ...p,
+              documents: documentsByProject.get(p.id) ?? p.documents,
+              meetingIds: meetingsByProject.has(p.id)
+                ? (meetingsByProject.get(p.id) ?? []).map((m) => m.id)
+                : p.meetingIds,
+            })),
           };
         });
       })
@@ -638,7 +673,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
-  const deleteMeeting = useCallback((meetingId: string) => {
+  // meeting.id가 곧 백엔드 Agenda UUID라, 로컬 화면에서만 지우면 다음 로그인(또는
+  // 프로젝트 재진입) 때 하이드레이션이 다시 채워 넣어 되살아난다 — 실제로 백엔드에서도
+  // 지워야 한다.
+  const deleteMeeting = useCallback(async (meetingId: string) => {
+    const res = await fetch(`/api/backend/agendas/${meetingId}`, { method: "DELETE" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? "회의 삭제에 실패했습니다.");
     setState((prev) => ({
       ...prev,
       meetings: prev.meetings.filter((m) => m.id !== meetingId),
@@ -651,23 +692,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const applyBackendDocuments = useCallback((projectId: string, rawDocuments: unknown[]) => {
-    const documents: ProjectDocument[] = rawDocuments.map((raw) => {
-      const d = raw as {
-        id: string;
-        title: string;
-        path: string | null;
-        isCoreContext: boolean;
-        syncedAt: string | null;
-        lastModifiedAt: string | null;
-      };
-      return {
-        id: d.id,
-        title: d.title,
-        path: d.path,
-        isCoreContext: d.isCoreContext,
-        updatedAt: d.syncedAt ?? d.lastModifiedAt ?? new Date().toISOString(),
-      };
-    });
+    const documents = mapBackendDocuments(rawDocuments);
     setState((prev) => ({
       ...prev,
       projects: prev.projects.map((p) => (p.id === projectId ? { ...p, documents } : p)),

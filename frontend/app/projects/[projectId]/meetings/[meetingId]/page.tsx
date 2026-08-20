@@ -49,6 +49,8 @@ export default function MeetingDetailPage({
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
   const [positionActionId, setPositionActionId] = useState<string | null>(null);
   const [positionActionError, setPositionActionError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const runPositionAction = async (positionId: string, action: () => Promise<void>) => {
     setPositionActionId(positionId);
@@ -84,10 +86,17 @@ export default function MeetingDetailPage({
     router.push(`/projects/${project.id}/meetings/${meeting.id}/live`);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!window.confirm(`"${meeting.title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) return;
-    deleteMeeting(meeting.id);
-    router.push(`/projects/${project.id}`);
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteMeeting(meeting.id);
+      router.push(`/projects/${project.id}`);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "회의 삭제에 실패했습니다.");
+      setDeleting(false);
+    }
   };
 
   return (
@@ -124,11 +133,12 @@ export default function MeetingDetailPage({
           </Link>
         )}
         {meeting.status !== "라이브" && (
-          <button type="button" className="btn btn-ghost" onClick={handleDelete}>
-            삭제
+          <button type="button" className="btn btn-ghost" onClick={handleDelete} disabled={deleting}>
+            {deleting ? "삭제 중…" : "삭제"}
           </button>
         )}
       </div>
+      {deleteError && <p className="field-hint" style={{ color: "var(--tone-danger-fg)" }}>{deleteError}</p>}
 
       <section className="section">
         <div className="section-header">

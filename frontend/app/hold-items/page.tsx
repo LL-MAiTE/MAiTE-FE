@@ -10,10 +10,11 @@ import { HoldItem, HoldItemStatus } from "@/lib/types";
 /**
  * 전체 보류 항목 (프로젝트/회의를 가로지르는 모아보기).
  *
- * 백엔드에 "여러 프로젝트 통틀어 보류 항목 조회" 엔드포인트가 아직 없어서, 지금은
- * 프론트 로컬(mock) `meeting.holdItems`를 모아서 보여준다 — 실제 후속 답변 작성/재오픈은
- * 여전히 각 회의의 "결과 검토" 화면에서 하므로, 여기서는 목록만 보여주고 그 화면으로
- * 연결한다. 백엔드가 전역 조회 API를 붙이면 데이터 소스만 바꾸면 된다.
+ * 백엔드에 "여러 프로젝트 통틀어 보류 항목 조회" 엔드포인트가 아직 없어서, 로그인 시
+ * store가 각 회의별로 하이드레이션한 `meeting.holdItems`를 모아서 보여준다 — 라이브를
+ * 한 번이라도 시작한 회의는 실제 백엔드 보류 항목이, 아직 로컬로만 존재하는 회의는
+ * 시뮬레이션 값이 섞여서 나온다. 후속 답변 작성/재오픈 같은 실제 액션은 각 회의의
+ * "결과 검토" 화면에서 하므로, 여기서는 목록만 보여주고 그 화면으로 연결한다.
  */
 
 type Tab = HoldItemStatus | "전체";
@@ -75,9 +76,9 @@ export default function HoldItemsPage() {
               <img src="/icons/nav-hold.svg" alt="" width={16} height={16} />
             </span>
             <div style={{ flex: 1 }}>
-              <strong>{item.relatedTopic ?? "(주제 미상)"}</strong>
+              <strong>{item.relatedTopic ?? item.reason ?? "(사유 미상)"}</strong>
               <p className="muted" style={{ margin: "2px 0 0" }}>
-                {meetingTitle} · {projects.find((p) => p.id === projectId)?.name} · {item.reason}
+                {meetingTitle} · {projects.find((p) => p.id === projectId)?.name}
               </p>
             </div>
             <HoldStatusBadge status={item.status} />

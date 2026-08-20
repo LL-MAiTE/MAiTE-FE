@@ -82,6 +82,8 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [expandedContent, setExpandedContent] = useState<string | null>(null);
   const [expandedLoading, setExpandedLoading] = useState(false);
   const [docActionError, setDocActionError] = useState<string | null>(null);
+  const [deletingMeetingId, setDeletingMeetingId] = useState<string | null>(null);
+  const [meetingActionError, setMeetingActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!project) return;
@@ -124,6 +126,19 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
       }
     } catch (err) {
       setDocActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleDeleteMeeting = async (meetingId: string, title: string) => {
+    if (!window.confirm(`"${title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    setDeletingMeetingId(meetingId);
+    setMeetingActionError(null);
+    try {
+      await deleteMeeting(meetingId);
+    } catch (err) {
+      setMeetingActionError(err instanceof Error ? err.message : "회의 삭제에 실패했습니다.");
+    } finally {
+      setDeletingMeetingId(null);
     }
   };
 
@@ -414,18 +429,20 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                   type="button"
                   className="btn btn-ghost btn-sm"
                   title="회의 삭제"
+                  disabled={deletingMeetingId === meeting.id}
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (window.confirm(`"${meeting.title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) {
-                      deleteMeeting(meeting.id);
-                    }
+                    handleDeleteMeeting(meeting.id, meeting.title);
                   }}
                 >
-                  삭제
+                  {deletingMeetingId === meeting.id ? "삭제 중…" : "삭제"}
                 </button>
               </Link>
             ))
+          )}
+          {meetingActionError && (
+            <p className="field-hint" style={{ color: "var(--tone-danger-fg)" }}>{meetingActionError}</p>
           )}
         </section>
       )}
