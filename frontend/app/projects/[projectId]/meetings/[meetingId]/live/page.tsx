@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { EmptyState, Card } from "@/components/Card";
 import { HoldStatusBadge, MeetingStatusBadge } from "@/components/Badge";
@@ -65,8 +66,15 @@ export default function LiveMeetingPage({
 }: {
   params: { projectId: string; meetingId: string };
 }) {
-  const { getProject, getMeeting, askQuestion, tickNumberConfirmation, resolveNumberConfirmation } =
-    useStore();
+  const router = useRouter();
+  const {
+    getProject,
+    getMeeting,
+    askQuestion,
+    tickNumberConfirmation,
+    resolveNumberConfirmation,
+    refreshProjectMeetings,
+  } = useStore();
   const project = getProject(params.projectId);
   const meeting = getMeeting(params.meetingId);
 
@@ -84,9 +92,9 @@ export default function LiveMeetingPage({
   const [muted, setMuted] = useState(false);
   const voiceSessionRef = useRef<AgoraVoiceSession | null>(null);
 
-  const [backendStatus, setBackendStatus] = useState<"없음" | "동기화중" | "시작중" | "실행중" | "오류">(
-    "없음"
-  );
+  const [backendStatus, setBackendStatus] = useState<
+    "없음" | "동기화중" | "시작중" | "실행중" | "종료중" | "오류"
+  >("없음");
   const [backendError, setBackendError] = useState<string | null>(null);
   const [backendMeetingId, setBackendMeetingId] = useState<string | null>(null);
 
@@ -315,6 +323,7 @@ export default function LiveMeetingPage({
     await voiceSessionRef.current?.disconnect();
     voiceSessionRef.current = null;
     setMuted(false);
+    setBackendStatus("종료중");
     try {
       if (backendMeetingId) {
         const res = await fetch("/api/backend/meeting-end", {
@@ -325,9 +334,13 @@ export default function LiveMeetingPage({
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       }
+      // 종료 시점에 백엔드가 안건별 합의 결과를 정리해두므로(회의 요약), 회의
+      // 상태·보류함까지 실제 값으로 다시 채운 다음 결과 검토 화면으로 넘어간다 —
+      // 예전엔 "종료" 버튼을 눌러도 상태가 안 바뀌고 화면에 그대로 남아있었다.
+      await refreshProjectMeetings(project.id);
+      router.push(`/projects/${project.id}/meetings/${meeting.id}/review`);
     } catch (err) {
       setBackendError(err instanceof Error ? err.message : String(err));
-    } finally {
       setBackendStatus("없음");
     }
   };
@@ -475,7 +488,7 @@ export default function LiveMeetingPage({
         </div>
 
         <div className="live-call-controls">
-          {backendStatus === "실행중" ? (
+          {backendStatus === "실행중" || backendStatus === "종료중" ? (
             <>
               <div className="live-control-btn-group">
                 <button type="button" className="live-control-btn" onClick={handleToggleMute}>
@@ -484,11 +497,18 @@ export default function LiveMeetingPage({
                   </span>
                   <span className="live-control-label">{muted ? "음소거 해제" : "음소거"}</span>
                 </button>
-                <button type="button" className="live-control-btn" onClick={handleStopBackendMeeting}>
+                <button
+                  type="button"
+                  className="live-control-btn"
+                  onClick={handleStopBackendMeeting}
+                  disabled={backendStatus === "종료중"}
+                >
                   <span className="live-control-btn-icon danger">
                     <img src="/icons/icon-phone-end.svg" alt="" width={18} height={18} />
                   </span>
-                  <span className="live-control-label">종료</span>
+                  <span className="live-control-label">
+                    {backendStatus === "종료중" ? "요약 정리 중…" : "종료"}
+                  </span>
                 </button>
                 <button type="button" className="live-control-btn" onClick={handleToggleFullscreen}>
                   <span className="live-control-btn-icon" style={{ fontSize: 16 }}>

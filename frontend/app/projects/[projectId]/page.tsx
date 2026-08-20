@@ -31,6 +31,7 @@ interface ProjectMember {
   userName: string;
   userEmail: string;
   role: string;
+  status: "PENDING" | "ACTIVE" | "DECLINED";
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -343,17 +344,23 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
             <h3 style={{ margin: 0 }}>팀원 {membersLoading ? "" : `(${members.length}명)`}</h3>
           </div>
           <p className="field-hint" style={{ marginTop: -6 }}>
-            초대하려는 사람이 백엔드에 먼저 회원가입돼 있어야 합니다.
+            초대하려는 사람이 먼저 회원가입돼 있어야 합니다. 초대하면 바로 멤버가 되는 게 아니라
+            상대방이 알림에서 수락해야 정식 멤버가 됩니다.
           </p>
           <div className="stack" style={{ marginTop: 8 }}>
-            {members.map((m) => (
-              <div key={m.id} className="row-between">
-                <span style={{ fontSize: 13 }}>
-                  <strong>{m.userName}</strong> <span className="muted">{m.userEmail}</span>
-                </span>
-                <Badge tone="neutral">{ROLE_LABEL[m.role] ?? m.role}</Badge>
-              </div>
-            ))}
+            {members
+              .filter((m) => m.status !== "DECLINED")
+              .map((m) => (
+                <div key={m.id} className="row-between">
+                  <span style={{ fontSize: 13 }}>
+                    <strong>{m.userName}</strong> <span className="muted">{m.userEmail}</span>
+                  </span>
+                  <div className="row" style={{ gap: 4 }}>
+                    {m.status === "PENDING" && <Badge tone="warning">초대 수락 대기중</Badge>}
+                    <Badge tone="neutral">{ROLE_LABEL[m.role] ?? m.role}</Badge>
+                  </div>
+                </div>
+              ))}
           </div>
           <form onSubmit={handleInvite} className="row" style={{ marginTop: 12 }}>
             <input

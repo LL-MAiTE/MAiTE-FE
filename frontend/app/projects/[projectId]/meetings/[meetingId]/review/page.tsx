@@ -9,9 +9,28 @@ import { MAX_REOPEN_COUNT, TranscriptReviewDecision } from "@/lib/types";
 import type {
   BackendHoldItem,
   BackendMeetingLog,
+  BackendMeetingPosition,
   BackendRequiredReview,
   BackendTranscript,
 } from "@/lib/backendApi";
+
+/** 회의 요약 카드의 결과 배지. */
+const RESULT_STATUS_LABEL: Record<BackendMeetingPosition["resultStatus"], string> = {
+  NOT_DISCUSSED: "논의 안 됨",
+  AGREED: "합의됨",
+  OUT_OF_RANGE_AGREED: "범위 밖 합의 — 확인 필요",
+  NOT_AGREED: "합의 안 됨",
+};
+
+const RESULT_STATUS_TONE: Record<
+  BackendMeetingPosition["resultStatus"],
+  "neutral" | "success" | "warning" | "danger"
+> = {
+  NOT_DISCUSSED: "neutral",
+  AGREED: "success",
+  OUT_OF_RANGE_AGREED: "warning",
+  NOT_AGREED: "danger",
+};
 
 const DECISIONS: Exclude<TranscriptReviewDecision, "미검토">[] = ["승인", "수정", "철회", "재보류"];
 
@@ -91,6 +110,7 @@ export default function MeetingReviewPage({
   const [meetingLogs, setMeetingLogs] = useState<BackendMeetingLog[]>([]);
   const [transcripts, setTranscripts] = useState<BackendTranscript[]>([]);
   const [requiredReviews, setRequiredReviews] = useState<BackendRequiredReview[]>([]);
+  const [meetingPositions, setMeetingPositions] = useState<BackendMeetingPosition[]>([]);
   const [loadingBackend, setLoadingBackend] = useState(false);
   const [backendError, setBackendError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
@@ -98,26 +118,30 @@ export default function MeetingReviewPage({
   const refetchBackendData = async (bMeetingId: string) => {
     setBackendError(null);
     try {
-      const [holdRes, logsRes, transcriptsRes, requiredRes] = await Promise.all([
+      const [holdRes, logsRes, transcriptsRes, requiredRes, positionsRes] = await Promise.all([
         fetch(`/api/backend/hold-items?backendMeetingId=${bMeetingId}`),
         fetch(`/api/backend/meeting-logs?backendMeetingId=${bMeetingId}`),
         fetch(`/api/backend/meeting-transcripts?backendMeetingId=${bMeetingId}`),
         fetch(`/api/backend/required-reviews?backendMeetingId=${bMeetingId}`),
+        fetch(`/api/backend/meeting-positions?backendMeetingId=${bMeetingId}`),
       ]);
-      const [holdData, logsData, transcriptsData, requiredData] = await Promise.all([
+      const [holdData, logsData, transcriptsData, requiredData, positionsData] = await Promise.all([
         holdRes.json(),
         logsRes.json(),
         transcriptsRes.json(),
         requiredRes.json(),
+        positionsRes.json(),
       ]);
       if (!holdRes.ok) throw new Error(holdData.error ?? "보류함을 불러오지 못했습니다.");
       if (!logsRes.ok) throw new Error(logsData.error ?? "대화 로그를 불러오지 못했습니다.");
       if (!transcriptsRes.ok) throw new Error(transcriptsData.error ?? "전사 원문을 불러오지 못했습니다.");
       if (!requiredRes.ok) throw new Error(requiredData.error ?? "필수 검토 항목을 불러오지 못했습니다.");
+      if (!positionsRes.ok) throw new Error(positionsData.error ?? "회의 요약을 불러오지 못했습니다.");
       setHoldItems(holdData.holdItems);
       setMeetingLogs(logsData.logs);
       setTranscripts(transcriptsData.transcripts);
       setRequiredReviews(requiredData.requiredReviews);
+      setMeetingPositions(positionsData.positions);
     } catch (err) {
       setBackendError(err instanceof Error ? err.message : String(err));
     }
@@ -247,8 +271,9 @@ export default function MeetingReviewPage({
           <MeetingStatusBadge status={meeting.status} />
         </div>
         <p className="muted">
-          모든 보류 항목이 확정되거나 &ldquo;실시간 조율 필요&rdquo;로 종결되면 미팅 상태가 자동으로
-          &ldquo;종료&rdquo;로 바뀝니다. 별도의 종료 버튼은 없습니다.
+          라이브 화면에서 &ldquo;종료&rdquo;를 누르면 대화 전체를 분석해 안건별 합의 결과를 정리합니다.
+          그 후에도 보류 항목이 전부 확정되거나 &ldquo;실시간 조율 필요&rdquo;로 종결되면 미팅 상태가
+          자동으로 &ldquo;종료&rdquo;로 바뀝니다.
         </p>
         {loadingBackend && <p className="field-hint">실제 회의 데이터를 확인하는 중…</p>}
         {!loadingBackend && !usingBackend && backendMeetingId === null && (
@@ -262,6 +287,35 @@ export default function MeetingReviewPage({
 
       {usingBackend ? (
         <>
+          <section className="section">
+            <h2>회의 요약 ({meetingPositions.length}개 안건)</h2>
+            {meetingPositions.length === 0 ? (
+              <p className="muted">아직 이 회의에서 다룬 안건이 없습니다.</p>
+            ) : (
+              meetingPositions.map((mp) => (
+                <Card key={mp.id}>
+                  <div className="row-between">
+                    <strong>{mp.topic}</strong>
+                    <Badge tone={RESULT_STATUS_TONE[mp.resultStatus]}>
+                      {RESULT_STATUS_LABEL[mp.resultStatus]}
+                    </Badge>
+                  </div>
+                  <p className="muted" style={{ marginTop: 4 }}>
+                    {mp.questionText}
+                  </p>
+                  {mp.agreedValue && (
+                    <p style={{ marginTop: 8 }}>
+                      <strong>합의된 내용</strong>: {mp.agreedValue}
+                    </p>
+                  )}
+                </Card>
+              ))
+            )}
+            <p className="field-hint">
+              라이브 화면에서 &ldquo;종료&rdquo;를 누르면 전체 대화를 다시 분석해 이 요약을 갱신합니다.
+            </p>
+          </section>
+
           <section className="section">
             <h2>대화별 검토 ({meetingLogs.length}건)</h2>
             {meetingLogs.length === 0 ? (

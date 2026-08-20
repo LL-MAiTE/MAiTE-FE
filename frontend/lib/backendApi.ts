@@ -416,6 +416,8 @@ export interface BackendProjectMember {
   userName: string;
   userEmail: string;
   role: string;
+  /** PENDING(초대는 갔지만 아직 수락 안 함) | ACTIVE(수락 완료/원래 멤버) | DECLINED(거절함) */
+  status: "PENDING" | "ACTIVE" | "DECLINED";
 }
 
 export async function listBackendProjectMembers(
@@ -425,6 +427,8 @@ export async function listBackendProjectMembers(
   return backendFetch<BackendProjectMember[]>(token, `/projects/${backendProjectId}/members`);
 }
 
+/** 멤버로 바로 추가되지 않고 PENDING으로 초대만 간다 — 초대받은 사람이 수락해야 정식
+ * 멤버가 되고 그 사람의 "내 프로젝트" 목록에도 뜬다. */
 export async function inviteBackendProjectMember(
   token: string,
   backendProjectId: string,
@@ -434,6 +438,21 @@ export async function inviteBackendProjectMember(
   return backendFetch<BackendProjectMember>(token, `/projects/${backendProjectId}/members`, {
     method: "POST",
     body: { userId, role },
+  });
+}
+
+/** 로그인한 사람에게 온, 아직 응답 안 한 초대 전체. */
+export async function listMyPendingInvitations(token: string): Promise<BackendProjectMember[]> {
+  return backendFetch<BackendProjectMember[]>(token, "/project-members/pending");
+}
+
+export async function respondToInvitation(
+  token: string,
+  memberId: string,
+  accept: boolean
+): Promise<BackendProjectMember> {
+  return backendFetch<BackendProjectMember>(token, `/project-members/${memberId}/${accept ? "accept" : "decline"}`, {
+    method: "POST",
   });
 }
 
@@ -608,6 +627,34 @@ export interface BackendMeetingLog {
   limitationNote: string | null;
   deliveredAt: string | null;
   status: "PENDING" | "DELIVERED" | "ON_HOLD";
+}
+
+export interface BackendMeetingPosition {
+  id: string;
+  positionId: string;
+  topic: string;
+  questionText: string;
+  answer: string | null;
+  preference: string | null;
+  concessionRange: string | null;
+  dealbreaker: string | null;
+  priority: number | null;
+  scheduleConstraint: string | null;
+  snappedVersion: number;
+  snappedAt: string;
+  /** 회의 종료 시 백엔드가 전체 대화를 AI로 분석해서 채운다(그 전엔 NOT_DISCUSSED/null). */
+  resultStatus: "NOT_DISCUSSED" | "AGREED" | "OUT_OF_RANGE_AGREED" | "NOT_AGREED";
+  agreedValue: string | null;
+  resolvedAt: string | null;
+}
+
+/** 이 회의(라이브 세션)에서 실제로 다룬 승인 안건 스냅샷 + 종료 시 분석된 합의 결과 —
+ * "회의 요약"(안건별로 뭐가 어떻게 됐는지) 화면에 쓴다. */
+export async function listBackendMeetingPositions(
+  token: string,
+  backendMeetingId: string
+): Promise<BackendMeetingPosition[]> {
+  return backendFetch<BackendMeetingPosition[]>(token, `/meetings/${backendMeetingId}/positions`);
 }
 
 export async function listBackendMeetingLogs(token: string, backendMeetingId: string): Promise<BackendMeetingLog[]> {

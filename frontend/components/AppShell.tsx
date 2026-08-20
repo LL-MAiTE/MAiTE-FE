@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { useAuth } from "@/lib/auth";
+import { NOTIFICATION_LABELS, NOTIFICATION_REFERENCE_LABELS, formatRelativeTime } from "@/lib/labels";
 
 /**
  * 공용 앱 셸 (탑바 + 사이드바 + 메인 콘텐츠 영역).
@@ -121,6 +122,31 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
+  const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  const handleRespondInvite = async (notification: NotificationItem, accept: boolean) => {
+    setRespondingId(notification.id);
+    setInviteError(null);
+    try {
+      const res = await fetch(`/api/backend/project-members/${notification.referenceId}/respond`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accept }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      await handleMarkRead(notification.id);
+      // 수락하면 그 프로젝트가 "내 프로젝트" 목록에 새로 뜨는데, 그 목록은 로그인 시점에
+      // 한 번 불러온 것이라 지금 세션에 반영하려면 새로고침이 제일 확실하다.
+      if (accept) window.location.href = "/projects";
+      else await fetchNotifications();
+    } catch (err) {
+      setInviteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRespondingId(null);
+    }
+  };
 
   const handleMarkRead = async (id: string) => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
@@ -203,19 +229,48 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {!notifLoading && !notifError && notifications.length === 0 && (
                   <p className="muted" style={{ padding: "12px 16px" }}>알림이 없습니다.</p>
                 )}
-                {notifications.map((n) => (
-                  <button
-                    key={n.id}
-                    type="button"
-                    className={`app-notif-item ${n.isRead ? "" : "unread"}`}
-                    onClick={() => handleMarkRead(n.id)}
-                  >
-                    <span className="app-notif-item-type">{n.type}</span>
-                    <span className="app-notif-item-meta">
-                      {n.referenceType} · {new Date(n.createdAt).toLocaleString("ko-KR")}
-                    </span>
-                  </button>
-                ))}
+                {inviteError && (
+                  <p style={{ padding: "0 16px 8px", color: "var(--tone-danger-fg)" }}>{inviteError}</p>
+                )}
+                {notifications.map((n) =>
+                  n.type === "PROJECT_INVITED" ? (
+                    <div key={n.id} className={`app-notif-item ${n.isRead ? "" : "unread"}`}>
+                      <span className="app-notif-item-type">{NOTIFICATION_LABELS[n.type] ?? n.type}</span>
+                      <span className="app-notif-item-meta">{formatRelativeTime(n.createdAt)}</span>
+                      <div className="row" style={{ marginTop: 6 }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          disabled={respondingId === n.id}
+                          onClick={() => handleRespondInvite(n, true)}
+                        >
+                          수락
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          disabled={respondingId === n.id}
+                          onClick={() => handleRespondInvite(n, false)}
+                        >
+                          거절
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      key={n.id}
+                      type="button"
+                      className={`app-notif-item ${n.isRead ? "" : "unread"}`}
+                      onClick={() => handleMarkRead(n.id)}
+                    >
+                      <span className="app-notif-item-type">{NOTIFICATION_LABELS[n.type] ?? n.type}</span>
+                      <span className="app-notif-item-meta">
+                        {NOTIFICATION_REFERENCE_LABELS[n.referenceType] ?? n.referenceType} ·{" "}
+                        {formatRelativeTime(n.createdAt)}
+                      </span>
+                    </button>
+                  )
+                )}
               </div>
             )}
           </div>
