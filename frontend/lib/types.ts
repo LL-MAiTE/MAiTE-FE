@@ -87,6 +87,8 @@ export type MeetingStatus =
   | "종료"; // 모든 보류 항목이 종결됨
 
 export interface Meeting {
+  // 백엔드 Agenda의 실 UUID다(project.id 때와 같은 패턴) — 회의 준비(안건 생성·승인)는
+  // 이제 이 백엔드가 원본이다. [[tkzr-scope-decisions]]
   id: string;
   projectId: string;
   title: string;
@@ -94,14 +96,20 @@ export interface Meeting {
   counterpartInfo: string; // 국가/언어/소속 등 자유 텍스트 (AI 안건 생성 프롬프트 컨텍스트용)
   // 상대방이 실제로 쓰는 언어의 BCP-47 코드(예: "en-US", "ja-JP"). 라이브 통화의
   // ASR/TTS/LLM 응답 언어를 결정하는 데 쓰인다(counterpartInfo는 자유 텍스트라 이
-  // 목적엔 못 씀) — 기본값 "ko-KR". [[tkzr-scope-decisions]]
+  // 목적엔 못 씀) — 기본값 "ko-KR".
   counterpartLanguageCode: string;
   // 회의 생성 시 필수로 최소 1개 선택. 문서가 이제 전부 백엔드 원본이라(수동 업로드든
-  // Git 연동이든 동일한 source_document) 문서 출처 구분 없이 id만 담는다 — 내용은
-  // store가 필요할 때(안건 생성 직전) /api/backend/documents/:id로 가져온다.
+  // Git 연동이든 동일한 source_document) 문서 출처 구분 없이 id만 담는다.
   selectedDocumentIds: string[];
+  // sourceDocumentId → AgendaReferenceDocument id. 문서를 껐다가 다시 켤 때
+  // (PATCH .../agenda-reference-documents/:id) 필요한 백엔드 쪽 참조 문서 레코드 id —
+  // selectedDocumentIds만으론 이 id를 알 수 없어서 따로 들고 있는다.
+  referenceDocRefIds: Record<string, string>;
   status: MeetingStatus;
   positions: Position[];
+  // 아래 셋은 아직 로컬 mock이 원본이다 — 실시간 대화(RTC data stream)/시뮬레이션 표시용,
+  // 보류함·필수검토는 백엔드에 이미 실 API(HoldController/ReviewController)가 있지만
+  // 이번 phase 범위 밖이라 다음 작업으로 남겨둠(역할 분담 목록 A번 참고).
   transcript: TranscriptEntry[];
   holdItems: HoldItem[];
   mandatoryReviewItems: MandatoryReviewItem[];

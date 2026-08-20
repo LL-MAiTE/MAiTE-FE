@@ -12,10 +12,15 @@
  * 실제 UUID를 그대로 쓴다(예전엔 로컬 mock id와 백엔드 id가 달라서 별도 매핑 파일이
  * 필요했는데, 프로젝트 레벨에서는 이제 그 매핑이 필요 없다).
  *
- * 회의 준비(Agenda·Position)는 아직 프론트 mock(localStorage)이 원본이다 — 라이브 미팅을
- * 실제로 시작할 때만, 그 시점의 로컬 데이터를 백엔드에 "동기화"해서 Agora Conversational
- * AI(백엔드가 소유)가 실제 DB 데이터를 보고 응답하게 만든다. 이 부분의 로컬↔백엔드 id
- * 매핑(lib/backendMeetingLinkStore.ts의 MEETING_STORE_FILE)은 여전히 필요하다.
+ * 회의 준비(Agenda·Position)도 이제 이 백엔드가 원본이다 — meeting.id는 항상 백엔드
+ * Agenda UUID를 그대로 쓴다(프로젝트 때와 같은 패턴). 안건 초안 생성은 draft-positions
+ * 엔드포인트가, 승인/수정/반려/삭제는 각각 approve/revise/reject/DELETE가 담당한다.
+ *
+ * Meeting(실제 라이브 세션)만 아직 지연 생성이다 — "미팅 시작"을 누르는 시점에 처음
+ * 만들어진다(agenda/position은 이미 실 데이터라 그때 가서 새로 만들 게 없고, 그냥
+ * POST /agendas/:id/meetings 한 번만 부르면 됨). 이 local meetingId ↔ backend Meeting id
+ * 매핑(lib/backendMeetingLinkStore.ts)은 그래서 여전히 필요하다 — 여기서 local
+ * meetingId는 이제 곧 agendaId다.
  * (전체 마이그레이션 진행 상황은 [[tkzr-scope-decisions]] 참고)
  */
 
@@ -124,11 +129,132 @@ export async function createBackendAgenda(
   });
 }
 
+export interface BackendReferenceDocument {
+  id: string; // AgendaReferenceDocument id — 이 값이 있어야 exclude/include 토글이 가능하다.
+  agendaId: string;
+  sourceDocumentId: string;
+  documentTitle: string;
+  isCoreContext: boolean;
+  excluded: boolean;
+}
+
+export async function selectBackendReferenceDocuments(
+  token: string,
+  agendaId: string,
+  sourceDocumentIds: string[]
+): Promise<BackendReferenceDocument[]> {
+  return backendFetch<BackendReferenceDocument[]>(token, `/agendas/${agendaId}/reference-documents`, {
+    method: "POST",
+    body: { sourceDocumentIds },
+  });
+}
+
+export async function updateBackendReferenceDocument(
+  token: string,
+  refDocId: string,
+  excluded: boolean
+): Promise<BackendReferenceDocument> {
+  return backendFetch<BackendReferenceDocument>(token, `/agenda-reference-documents/${refDocId}`, {
+    method: "PATCH",
+    body: { excluded },
+  });
+}
+
+export interface BackendPositionFull {
+  id: string;
+  agendaId: string;
+  topic: string;
+  questionText: string;
+  generatedBy: "AI_DRAFT" | "USER";
+  sourceDocumentId: string | null;
+  activeFields: string[];
+  answer: string | null;
+  preference: string | null;
+  concessionRange: string | null;
+  dealbreaker: string | null;
+  priority: number | null;
+  scheduleConstraint: string | null;
+  confidenceLevel: "DOCUMENT_BASED" | "ESTIMATED" | null;
+  approvalStatus: "DRAFT" | "APPROVED" | "REVISED_APPROVED" | "REJECTED" | "PENDING";
+  version: number;
+  isLatest: boolean;
+  supersedesId: string | null;
+}
+
+/** 참조 문서를 근거로 새 AI 안건 초안을 생성한다. ⚠️ 기존 초안을 대체하지 않고 그냥
+ * 추가한다 — 문서 선택을 바꿔서 다시 생성할 땐, 호출부가 먼저 기존 미승인 AI 초안을
+ * 지우고 나서 이 함수를 불러야 중복/낡은 안건이 안 남는다. */
+export async function generateBackendDraftPositions(
+  token: string,
+  agendaId: string
+): Promise<BackendPositionFull[]> {
+  return backendFetch<BackendPositionFull[]>(token, `/agendas/${agendaId}/draft-positions`, { method: "POST" });
+}
+
+/** isLatest=true인 안건만(REJECTED라도 markNotLatest 안 됐으면 포함, 삭제된 건 제외). */
+export async function listBackendPositions(token: string, agendaId: string): Promise<BackendPositionFull[]> {
+  return backendFetch<BackendPositionFull[]>(token, `/agendas/${agendaId}/positions`);
+}
+
+export interface BackendPositionInput {
+  topic: string;
+  questionText: string;
+  answer: string | null;
+  preference: string | null;
+  concessionRange: string | null;
+  dealbreaker: string | null;
+  priority: number | null;
+  scheduleConstraint: string | null;
+}
+
+export async function createBackendPosition(
+  token: string,
+  agendaId: string,
+  input: BackendPositionInput
+): Promise<BackendPositionFull> {
+  return backendFetch<BackendPositionFull>(token, `/agendas/${agendaId}/positions`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function approveBackendPosition(
+  token: string,
+  positionId: string,
+  approvalStatus: "APPROVED" | "REVISED_APPROVED" | "REJECTED" | "PENDING" = "APPROVED"
+): Promise<BackendPositionFull> {
+  return backendFetch<BackendPositionFull>(token, `/positions/${positionId}/approve`, {
+    method: "POST",
+    body: { approvalStatus },
+  });
+}
+
+export async function reviseBackendPosition(
+  token: string,
+  positionId: string,
+  input: Partial<BackendPositionInput> & { approvalStatus: "APPROVED" | "REVISED_APPROVED" }
+): Promise<BackendPositionFull> {
+  return backendFetch<BackendPositionFull>(token, `/positions/${positionId}/revise`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function rejectBackendPosition(token: string, positionId: string): Promise<BackendPositionFull> {
+  return backendFetch<BackendPositionFull>(token, `/positions/${positionId}/reject`, { method: "POST" });
+}
+
+export async function deleteBackendPosition(token: string, positionId: string): Promise<void> {
+  await backendFetch(token, `/positions/${positionId}`, { method: "DELETE" });
+}
+
 export interface BackendPosition {
   id: string;
   topic: string;
 }
 
+/** @deprecated sync-meeting이 이제 이미 승인된 backend Position을 그대로 쓰기 때문에
+ * (라이브 시작 시점에 새로 만들 필요가 없어짐) 더 안 쓰이지만, 혹시 몰라 남겨둔다. */
 export async function addAndApproveBackendPosition(
   token: string,
   agendaId: string,

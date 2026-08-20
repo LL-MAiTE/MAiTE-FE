@@ -30,8 +30,10 @@ export default function MeetingDetailPage({
     getMeeting,
     refreshProjectDocuments,
     regenerateDraftPositions,
-    setPositionApproval,
-    updatePosition,
+    approvePosition,
+    rejectPosition,
+    revisePosition,
+    deletePosition,
     addUserPosition,
     startLiveMeeting,
     deleteMeeting,
@@ -45,6 +47,20 @@ export default function MeetingDetailPage({
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [regeneratingDrafts, setRegeneratingDrafts] = useState(false);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
+  const [positionActionId, setPositionActionId] = useState<string | null>(null);
+  const [positionActionError, setPositionActionError] = useState<string | null>(null);
+
+  const runPositionAction = async (positionId: string, action: () => Promise<void>) => {
+    setPositionActionId(positionId);
+    setPositionActionError(null);
+    try {
+      await action();
+    } catch (error) {
+      setPositionActionError(error instanceof Error ? error.message : "안건 처리에 실패했습니다.");
+    } finally {
+      setPositionActionId(null);
+    }
+  };
 
   useEffect(() => {
     if (project) refreshProjectDocuments(project.id).catch(() => {});
@@ -193,11 +209,13 @@ export default function MeetingDetailPage({
           <AddPositionForm
             onCancel={() => setShowAddForm(false)}
             onSubmit={(input) => {
-              addUserPosition(meeting.id, input);
               setShowAddForm(false);
+              runPositionAction("new", () => addUserPosition(meeting.id, input));
             }}
           />
         )}
+
+        {positionActionError && <p className="field-hint">{positionActionError}</p>}
 
         {activePositions.length === 0 ? (
           <EmptyState
@@ -212,9 +230,8 @@ export default function MeetingDetailPage({
                 position={position}
                 onCancel={() => setEditingId(null)}
                 onSave={(updates) => {
-                  updatePosition(meeting.id, position.id, updates);
-                  setPositionApproval(meeting.id, position.id, "수정후승인");
                   setEditingId(null);
+                  runPositionAction(position.id, () => revisePosition(meeting.id, position.id, updates));
                 }}
               />
             ) : (
@@ -226,22 +243,29 @@ export default function MeetingDetailPage({
                     <>
                       <button
                         className="btn btn-sm btn-primary"
-                        onClick={() => setPositionApproval(meeting.id, position.id, "승인")}
+                        disabled={positionActionId === position.id}
+                        onClick={() => runPositionAction(position.id, () => approvePosition(meeting.id, position.id))}
                       >
                         승인
                       </button>
-                      <button className="btn btn-sm" onClick={() => setEditingId(position.id)}>
+                      <button
+                        className="btn btn-sm"
+                        disabled={positionActionId === position.id}
+                        onClick={() => setEditingId(position.id)}
+                      >
                         수정 후 승인
                       </button>
                       <button
                         className="btn btn-sm btn-danger"
-                        onClick={() => setPositionApproval(meeting.id, position.id, "반려")}
+                        disabled={positionActionId === position.id}
+                        onClick={() => runPositionAction(position.id, () => rejectPosition(meeting.id, position.id))}
                       >
                         반려
                       </button>
                       <button
                         className="btn btn-sm btn-ghost"
-                        onClick={() => setPositionApproval(meeting.id, position.id, "삭제됨")}
+                        disabled={positionActionId === position.id}
+                        onClick={() => runPositionAction(position.id, () => deletePosition(meeting.id, position.id))}
                       >
                         삭제
                       </button>

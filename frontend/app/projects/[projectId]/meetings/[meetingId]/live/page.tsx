@@ -271,28 +271,12 @@ export default function LiveMeetingPage({
     setVoiceError(null);
     setBackendStatus("동기화중");
     try {
-      // 1) 로컬(localStorage) 회의 데이터를 백엔드 실 DB에 반영 (처음 한 번만 실제로 생성됨)
+      // 1) 회의 준비 단계에서 이미 만들어진 백엔드 Agenda(=meeting.id)에 실제 Meeting을 붙인다
+      // (처음 한 번만 실제로 생성되고, 이후엔 저장된 매핑을 재사용한다).
       const syncRes = await fetch("/api/backend/sync-meeting", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          localMeetingId: meeting.id,
-          projectId: project.id,
-          title: meeting.title,
-          purpose: meeting.purpose,
-          counterpartInfo: meeting.counterpartInfo,
-          counterpartLanguageCode: meeting.counterpartLanguageCode,
-          approvedPositions: approvedPositions.map((p) => ({
-            topic: p.topic,
-            questionText: p.questionText,
-            answer: p.answer,
-            preference: p.preference,
-            concessionRange: p.concessionRange,
-            dealbreaker: p.dealbreaker,
-            priority: p.priority,
-            scheduleConstraint: p.scheduleConstraint,
-          })),
-        }),
+        body: JSON.stringify({ localMeetingId: meeting.id }),
       });
       const syncData = await syncRes.json();
       if (!syncRes.ok) throw new Error(syncData.error ?? `HTTP ${syncRes.status}`);

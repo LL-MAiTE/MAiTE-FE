@@ -1,39 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createBackendAgenda, addAndApproveBackendPosition, createBackendMeeting } from "@/lib/backendApi";
+import { createBackendMeeting } from "@/lib/backendApi";
 import { getBackendLink, saveBackendLink } from "@/lib/backendMeetingLinkStore";
 import { getSessionToken } from "@/lib/session";
 
 export const runtime = "nodejs";
 
-interface SyncPosition {
-  topic: string;
-  questionText: string;
-  answer: string | null;
-  preference: string | null;
-  concessionRange: string | null;
-  dealbreaker: string | null;
-  priority: number | null;
-  scheduleConstraint: string | null;
-}
-
 interface SyncRequestBody {
+  /** 프론트 회의 id — Phase 5부터 이 값 자체가 이미 백엔드 Agenda UUID다(meeting.id 참고). */
   localMeetingId: string;
-  /** 백엔드 실 프로젝트 UUID(project.id) — [[tkzr-scope-decisions]] */
-  projectId: string;
-  title: string;
-  purpose: string;
-  counterpartInfo: string;
-  /** BCP-47 코드(예: "en-US") — 회의 생성 위저드에서 고른 상대방 언어. */
-  counterpartLanguageCode?: string;
-  approvedPositions: SyncPosition[];
 }
 
 /**
  * POST /api/backend/sync-meeting
  *
- * 프론트 로컬(localStorage) 회의를 백엔드 실 DB에 처음으로 반영한다.
- * "라이브 시작" 누를 때 한 번만 실행되고(이미 연결돼 있으면 그대로 재사용),
- * 백엔드가 실제로 Agora Conversational AI Agent를 붙일 수 있는 Meeting을 만들어준다.
+ * "라이브 시작" 누를 때 백엔드에 실제 Meeting(Agora 세션 단위)을 만든다. Agenda·Position은
+ * 이제 회의 준비(승인) 단계에서 이미 실 백엔드에 만들어져 있으므로(Phase 5), 여기서는
+ * 그 Agenda에 Meeting만 하나 붙이면 된다 — 이미 만든 적 있으면 그대로 재사용한다.
  */
 export async function POST(req: NextRequest) {
   let body: SyncRequestBody;
@@ -57,28 +39,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const agenda = await createBackendAgenda(token, {
-      projectId: body.projectId,
-      title: body.title,
-      purpose: body.purpose,
-      counterpartInfo: body.counterpartInfo,
-      counterpartLanguageCode: body.counterpartLanguageCode,
-    });
-
-    // 승인된 안건들을 순서대로 백엔드에 추가 + 즉시 승인 처리.
-    // 하나 실패해도 나머지는 계속 진행 — 매칭 대상이 하나라도 남는 게 전부 실패보다 낫다.
-    for (const position of body.approvedPositions) {
-      try {
-        await addAndApproveBackendPosition(token, agenda.id, position);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error(`[sync-meeting] 안건 "${position.topic}" 동기화 실패:`, err);
-      }
-    }
-
-    const meeting = await createBackendMeeting(token, agenda.id);
+    // localMeetingId가 곧 backendAgendaId다.
+    const meeting = await createBackendMeeting(token, body.localMeetingId);
     saveBackendLink(body.localMeetingId, {
-      backendAgendaId: agenda.id,
+      backendAgendaId: body.localMeetingId,
       backendMeetingId: meeting.id,
     });
 

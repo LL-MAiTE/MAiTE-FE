@@ -2,6 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import {
+  ConfidenceLevel,
   HoldItem,
   HoldReasonType,
   MandatoryReviewItem,
@@ -48,57 +49,113 @@ interface StoreState {
   meetings: Meeting[];
 }
 
-type AiPositionDraft = Omit<Position, "id" | "version" | "origin" | "approvalStatus">;
+// -----------------------------------------------------------------------
+// 회의 준비(Agenda·Position) — 이제 실제 백엔드가 원본이다. meeting.id는 항상
+// 백엔드 Agenda UUID를 그대로 쓴다. 아래는 그 API 호출부 + 백엔드 응답을 프론트
+// Position 모양으로 매핑하는 헬퍼들이다. [[tkzr-scope-decisions]]
+// -----------------------------------------------------------------------
 
-interface SourceDoc {
-  title: string;
-  content: string;
-  isCoreContext: boolean;
+const APPROVAL_STATUS_MAP: Record<string, PositionApprovalStatus> = {
+  DRAFT: "초안",
+  APPROVED: "승인",
+  REVISED_APPROVED: "수정후승인",
+  REJECTED: "반려",
+  PENDING: "초안", // 지금 어떤 엔드포인트도 PENDING을 만들지 않아 사실상 안 씀 — 안전한 기본값.
+};
+
+const CONFIDENCE_MAP: Record<string, ConfidenceLevel> = {
+  DOCUMENT_BASED: "문서근거명확",
+  ESTIMATED: "추정",
+};
+
+/** 백엔드 PositionResponse → 프론트 Position. sourceDocumentTitle은 백엔드가 id만 주기
+ * 때문에, 넘겨받은 project.documents에서 제목을 찾아 채운다(문서는 Phase 4에서 이미
+ * 실 데이터라 항상 최신 목록을 갖고 있음). reasoning은 백엔드에 없는 필드라 빈 문자열. */
+function mapBackendPosition(raw: Record<string, unknown>, project: Project | undefined): Position {
+  const sourceDocumentId = raw.sourceDocumentId as string | null;
+  const sourceDoc = sourceDocumentId ? project?.documents.find((d) => d.id === sourceDocumentId) : undefined;
+  return {
+    id: raw.id as string,
+    topic: raw.topic as string,
+    version: raw.version as number,
+    origin: raw.generatedBy === "USER" ? "user" : "ai",
+    approvalStatus: APPROVAL_STATUS_MAP[raw.approvalStatus as string] ?? "초안",
+    questionText: raw.questionText as string,
+    answer: (raw.answer as string | null) ?? null,
+    preference: (raw.preference as string | null) ?? null,
+    concessionRange: (raw.concessionRange as string | null) ?? null,
+    dealbreaker: (raw.dealbreaker as string | null) ?? null,
+    priority: (raw.priority as number | null) ?? null,
+    scheduleConstraint: (raw.scheduleConstraint as string | null) ?? null,
+    activeFields: (raw.activeFields as PositionField[]) ?? [],
+    confidenceLevel: CONFIDENCE_MAP[raw.confidenceLevel as string] ?? "추정",
+    sourceDocumentTitle: sourceDoc?.title ?? null,
+    reasoning: "",
+  };
 }
 
-/**
- * 문서 하나의 본문을 가져온다. 목록 API(/api/backend/documents)는 무거운 content를 안
- * 주기 때문에, AI 안건 생성 직전에 선택된 문서만 단건으로 가져온다. 실패한 문서는
- * 조용히 제외한다 — 하나가 실패했다고 나머지 문서로 하는 생성 자체를 막을 이유는 없다.
- */
-async function fetchBackendDocumentContent(id: string): Promise<SourceDoc | null> {
-  try {
-    const res = await fetch(`/api/backend/documents/${id}`);
-    const body = await res.json();
-    if (!res.ok || !body.document) return null;
-    return {
-      title: body.document.title,
-      content: body.document.content ?? "",
-      isCoreContext: Boolean(body.document.isCoreContext),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function resolveSourceDocs(documentIds: string[]): Promise<SourceDoc[]> {
-  const docs = await Promise.all(documentIds.map(fetchBackendDocumentContent));
-  return docs.filter((d): d is SourceDoc => d !== null);
-}
-
-async function requestDraftPositions(input: {
-  documents: SourceDoc[];
-  meetingTitle: string;
-  meetingPurpose: string;
-  counterpartInfo: string;
-}): Promise<AiPositionDraft[]> {
-  const response = await fetch("/api/ai/generate-draft-positions", {
+async function postJson<T = Record<string, unknown>>(url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify(body ?? {}),
   });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? `요청에 실패했습니다: ${url}`);
+  return data as T;
+}
 
-  const body = (await response.json()) as { positions?: AiPositionDraft[]; error?: string };
-  if (!response.ok || !Array.isArray(body.positions)) {
-    throw new Error(body.error ?? "AI 안건 생성에 실패했습니다.");
+/** 선택한 문서를 참조 문서로 등록/재활성화한다. sourceDocumentId → AgendaReferenceDocument id 맵을 반환. */
+async function selectReferenceDocuments(
+  agendaId: string,
+  sourceDocumentIds: string[]
+): Promise<Record<string, string>> {
+  if (sourceDocumentIds.length === 0) return {};
+  const body = await postJson<{ referenceDocuments: { id: string; sourceDocumentId: string }[] }>(
+    `/api/backend/agendas/${agendaId}/reference-documents`,
+    { sourceDocumentIds }
+  );
+  const map: Record<string, string> = {};
+  for (const ref of body.referenceDocuments) map[ref.sourceDocumentId] = ref.id;
+  return map;
+}
+
+async function setReferenceDocumentExcluded(refDocId: string, excluded: boolean): Promise<void> {
+  const res = await fetch(`/api/backend/agenda-reference-documents/${refDocId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ excluded }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? "참조 문서 상태 변경에 실패했습니다.");
   }
+}
 
-  return body.positions;
+async function fetchAgendaPositions(agendaId: string, project: Project | undefined): Promise<Position[]> {
+  const res = await fetch(`/api/backend/agendas/${agendaId}/positions`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "안건 목록을 불러오지 못했습니다.");
+  return ((body.positions as Record<string, unknown>[]) ?? []).map((p) => mapBackendPosition(p, project));
+}
+
+async function deleteBackendPositionCall(positionId: string): Promise<void> {
+  const res = await fetch(`/api/backend/positions/${positionId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? "안건 삭제에 실패했습니다.");
+  }
+}
+
+/** 문서 근거로 새 AI 초안을 생성하고, 방금 생성된 것만 프론트 Position으로 매핑해 돌려준다. */
+async function generateDraftPositionsOnBackend(
+  agendaId: string,
+  project: Project | undefined
+): Promise<Position[]> {
+  const body = await postJson<{ positions: Record<string, unknown>[] }>(
+    `/api/backend/agendas/${agendaId}/draft-positions`
+  );
+  return body.positions.map((p) => mapBackendPosition(p, project));
 }
 
 function seedState(): StoreState {
@@ -173,12 +230,12 @@ interface StoreContextValue {
   deleteMeeting: (meetingId: string) => void;
   regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
 
-  updatePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => void;
-  setPositionApproval: (
-    meetingId: string,
-    positionId: string,
-    status: PositionApprovalStatus
-  ) => void;
+  approvePosition: (meetingId: string, positionId: string) => Promise<void>;
+  rejectPosition: (meetingId: string, positionId: string) => Promise<void>;
+  /** 필드 수정 + "수정후승인" 상태를 한 번에 반영한다(백엔드가 새 버전을 만든다). */
+  revisePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => Promise<void>;
+  /** 소프트 삭제 — 매칭 대상에서 제외되고 목록에서도 사라진다. */
+  deletePosition: (meetingId: string, positionId: string) => Promise<void>;
   addUserPosition: (
     meetingId: string,
     input: {
@@ -186,7 +243,7 @@ interface StoreContextValue {
       questionText: string;
       fields: Partial<Record<PositionField, string | number>>;
     }
-  ) => void;
+  ) => Promise<void>;
 
   startLiveMeeting: (meetingId: string) => void;
   askQuestion: (meetingId: string, questionText: string) => Promise<void>;
@@ -437,29 +494,28 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       counterpartLanguageCode?: string;
       selectedDocumentIds: string[];
     }): Promise<Meeting> => {
-      const documents = await resolveSourceDocs(input.selectedDocumentIds);
-      const drafts = await requestDraftPositions({
-        documents,
-        meetingTitle: input.title,
-        meetingPurpose: input.purpose,
+      const agendaBody = await postJson<{ agenda: { id: string } }>("/api/backend/agendas", {
+        projectId: input.projectId,
+        title: input.title,
+        purpose: input.purpose,
         counterpartInfo: input.counterpartInfo,
+        counterpartLanguageCode: input.counterpartLanguageCode,
       });
-      const positions: Position[] = drafts.map((draft) => ({
-        ...draft,
-        id: genId("pos"),
-        version: 1,
-        origin: "ai",
-        approvalStatus: "초안",
-      }));
+      const agendaId = agendaBody.agenda.id;
+
+      const referenceDocRefIds = await selectReferenceDocuments(agendaId, input.selectedDocumentIds);
+      const project = state.projects.find((p) => p.id === input.projectId);
+      const positions = await generateDraftPositionsOnBackend(agendaId, project);
 
       const meeting: Meeting = {
-        id: genId("meeting"),
+        id: agendaId,
         projectId: input.projectId,
         title: input.title,
         purpose: input.purpose,
         counterpartInfo: input.counterpartInfo,
         counterpartLanguageCode: input.counterpartLanguageCode ?? "ko-KR",
         selectedDocumentIds: input.selectedDocumentIds,
+        referenceDocRefIds,
         status: "승인대기",
         positions,
         transcript: [],
@@ -478,74 +534,132 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
       return meeting;
     },
-    []
+    [state.projects]
   );
 
   const regenerateDraftPositions = useCallback(
     async (meetingId: string, selectedDocumentIds: string[]): Promise<void> => {
       const meeting = state.meetings.find((item) => item.id === meetingId);
       if (!meeting) throw new Error("회의를 찾을 수 없습니다.");
+      const project = state.projects.find((p) => p.id === meeting.projectId);
 
-      const documents = await resolveSourceDocs(selectedDocumentIds);
-      const drafts = await requestDraftPositions({
-        documents,
-        meetingTitle: meeting.title,
-        meetingPurpose: meeting.purpose,
-        counterpartInfo: meeting.counterpartInfo,
-      });
-      const freshDrafts: Position[] = drafts.map((draft) => ({
-        ...draft,
-        id: genId("pos"),
-        version: 1,
-        origin: "ai",
-        approvalStatus: "초안",
-      }));
+      // 참조 문서 선택 변경분을 백엔드에 반영한다: 새로 고른 문서는 등록, 껐다가 다시 켠
+      // 문서는 exclude 해제, 뺀 문서는 exclude 처리(레코드 자체는 남겨둔다 — 버전 이력 보존).
+      const existingIds = Object.keys(meeting.referenceDocRefIds);
+      const newDocIds = selectedDocumentIds.filter((id) => !existingIds.includes(id));
+      const reAddedIds = selectedDocumentIds.filter((id) => existingIds.includes(id));
+      const removedIds = existingIds.filter((id) => !selectedDocumentIds.includes(id));
 
-      updateMeeting(meetingId, (currentMeeting) => {
-        // 이미 승인/수정/사용자 추가된 안건은 유지하고, AI 초안(미승인) 상태였던 것만 새로 교체한다.
-        const kept = currentMeeting.positions.filter(
-          (p) => p.approvalStatus !== "초안" || p.origin === "user"
-        );
-        const keptTopics = new Set(kept.map((p) => p.topic));
-        const newOnes = freshDrafts.filter((p) => !keptTopics.has(p.topic));
-        return {
-          ...currentMeeting,
-          selectedDocumentIds,
-          positions: [...kept, ...newOnes],
-        };
-      });
-    },
-    [state.meetings, updateMeeting]
-  );
+      const newRefs = await selectReferenceDocuments(meeting.id, newDocIds);
+      await Promise.all(
+        reAddedIds.map((id) => setReferenceDocumentExcluded(meeting.referenceDocRefIds[id], false))
+      );
+      await Promise.all(
+        removedIds.map((id) => setReferenceDocumentExcluded(meeting.referenceDocRefIds[id], true))
+      );
+      const referenceDocRefIds = { ...meeting.referenceDocRefIds, ...newRefs };
 
-  const updatePosition = useCallback(
-    (meetingId: string, positionId: string, updates: Partial<Position>) => {
-      updateMeeting(meetingId, (meeting) => ({
-        ...meeting,
-        positions: meeting.positions.map((p) =>
-          p.id === positionId
-            ? { ...p, ...updates, version: p.version + (updates.approvalStatus ? 0 : 1) }
-            : p
-        ),
+      // 백엔드 draft-positions는 추가만 하고 교체하지 않으므로, AI 초안(아직 미승인)만 먼저
+      // 지운다 — 승인/수정후승인/사용자 추가 안건은 그대로 둔다.
+      const staleDrafts = meeting.positions.filter((p) => p.origin === "ai" && p.approvalStatus === "초안");
+      await Promise.all(staleDrafts.map((p) => deleteBackendPositionCall(p.id)));
+
+      await generateDraftPositionsOnBackend(meeting.id, project);
+      const positions = await fetchAgendaPositions(meeting.id, project);
+
+      updateMeeting(meetingId, (currentMeeting) => ({
+        ...currentMeeting,
+        selectedDocumentIds,
+        referenceDocRefIds,
+        positions,
       }));
     },
-    [updateMeeting]
+    [state.meetings, state.projects, updateMeeting]
   );
 
-  const setPositionApproval = useCallback(
-    (meetingId: string, positionId: string, status: PositionApprovalStatus) => {
+  const approvePosition = useCallback(
+    async (meetingId: string, positionId: string) => {
+      const project = state.projects.find(
+        (p) => p.id === state.meetings.find((m) => m.id === meetingId)?.projectId
+      );
+      const body = await postJson<{ position: Record<string, unknown> }>(
+        `/api/backend/positions/${positionId}/approve`
+      );
+      const approved = mapBackendPosition(body.position, project);
       updateMeeting(meetingId, (meeting) => ({
         ...meeting,
-        positions: meeting.positions.map((p) =>
-          p.id === positionId ? { ...p, approvalStatus: status } : p
-        ),
+        positions: meeting.positions.map((p) => (p.id === positionId ? approved : p)),
+      }));
+    },
+    [state.meetings, state.projects, updateMeeting]
+  );
+
+  const rejectPosition = useCallback(
+    async (meetingId: string, positionId: string) => {
+      const project = state.projects.find(
+        (p) => p.id === state.meetings.find((m) => m.id === meetingId)?.projectId
+      );
+      const body = await postJson<{ position: Record<string, unknown> }>(
+        `/api/backend/positions/${positionId}/reject`
+      );
+      const rejected = mapBackendPosition(body.position, project);
+      updateMeeting(meetingId, (meeting) => ({
+        ...meeting,
+        positions: meeting.positions.map((p) => (p.id === positionId ? rejected : p)),
+      }));
+    },
+    [state.meetings, state.projects, updateMeeting]
+  );
+
+  const revisePosition = useCallback(
+    async (meetingId: string, positionId: string, updates: Partial<Position>) => {
+      const project = state.projects.find(
+        (p) => p.id === state.meetings.find((m) => m.id === meetingId)?.projectId
+      );
+      // 백엔드가 수정을 새 버전(새 id)으로 만들기 때문에, 안 넘긴 필드는 이전 값을 그대로
+      // 이어받도록 undefined 필드는 아예 안 보낸다.
+      const payload: Record<string, unknown> = { approvalStatus: "REVISED_APPROVED" };
+      const fieldKeys: (keyof Position)[] = [
+        "topic",
+        "questionText",
+        "answer",
+        "preference",
+        "concessionRange",
+        "dealbreaker",
+        "priority",
+        "scheduleConstraint",
+      ];
+      for (const key of fieldKeys) {
+        if (updates[key] !== undefined) payload[key] = updates[key];
+      }
+
+      const body = await postJson<{ position: Record<string, unknown> }>(
+        `/api/backend/positions/${positionId}/revise`,
+        payload
+      );
+      const revised = mapBackendPosition(body.position, project);
+      updateMeeting(meetingId, (meeting) => ({
+        ...meeting,
+        // revise는 새 id를 발급하므로 옛 버전은 지우고 새 버전을 그 자리에 넣는다.
+        positions: [...meeting.positions.filter((p) => p.id !== positionId), revised],
+      }));
+    },
+    [state.meetings, state.projects, updateMeeting]
+  );
+
+  const deletePosition = useCallback(
+    async (meetingId: string, positionId: string) => {
+      await deleteBackendPositionCall(positionId);
+      updateMeeting(meetingId, (meeting) => ({
+        ...meeting,
+        positions: meeting.positions.filter((p) => p.id !== positionId),
       }));
     },
     [updateMeeting]
   );
 
   const addUserPosition = useCallback(
-    (
+    async (
       meetingId: string,
       input: {
         topic: string;
@@ -553,31 +667,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         fields: Partial<Record<PositionField, string | number>>;
       }
     ) => {
-      const activeFields = Object.keys(input.fields) as PositionField[];
-      const position: Position = {
-        id: genId("pos"),
-        topic: input.topic,
-        version: 1,
-        origin: "user",
-        approvalStatus: "승인",
-        questionText: input.questionText,
-        answer: (input.fields.answer as string) ?? null,
-        preference: (input.fields.preference as string) ?? null,
-        concessionRange: (input.fields.concessionRange as string) ?? null,
-        dealbreaker: (input.fields.dealbreaker as string) ?? null,
-        priority: (input.fields.priority as number) ?? null,
-        scheduleConstraint: (input.fields.scheduleConstraint as string) ?? null,
-        activeFields,
-        confidenceLevel: "문서근거명확",
-        sourceDocumentTitle: null,
-        reasoning: "답변 작성자가 직접 추가한 안건 (AI가 예상하지 못한 질문 보완용).",
-      };
+      const project = state.projects.find(
+        (p) => p.id === state.meetings.find((m) => m.id === meetingId)?.projectId
+      );
+      const created = await postJson<{ position: Record<string, unknown> }>(
+        `/api/backend/agendas/${meetingId}/positions`,
+        {
+          topic: input.topic,
+          questionText: input.questionText,
+          answer: (input.fields.answer as string) ?? null,
+          preference: (input.fields.preference as string) ?? null,
+          concessionRange: (input.fields.concessionRange as string) ?? null,
+          dealbreaker: (input.fields.dealbreaker as string) ?? null,
+          priority: (input.fields.priority as number) ?? null,
+          scheduleConstraint: (input.fields.scheduleConstraint as string) ?? null,
+        }
+      );
+      // 예전 mock 동작과 맞춰, 답변 작성자가 직접 추가한 안건은 바로 "승인" 상태로 만든다.
+      const approved = await postJson<{ position: Record<string, unknown> }>(
+        `/api/backend/positions/${created.position.id}/approve`
+      );
+      const position = mapBackendPosition(approved.position, project);
       updateMeeting(meetingId, (meeting) => ({
         ...meeting,
         positions: [...meeting.positions, position],
       }));
     },
-    [updateMeeting]
+    [state.meetings, state.projects, updateMeeting]
   );
 
   const startLiveMeeting = useCallback(
@@ -888,8 +1004,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     createMeeting,
     deleteMeeting,
     regenerateDraftPositions,
-    updatePosition,
-    setPositionApproval,
+    approvePosition,
+    rejectPosition,
+    revisePosition,
+    deletePosition,
     addUserPosition,
     startLiveMeeting,
     askQuestion,
