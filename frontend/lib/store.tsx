@@ -142,6 +142,7 @@ interface StoreContextValue {
   createProject: (name: string, description: string) => Project;
   deleteProject: (projectId: string) => void;
   addDocument: (projectId: string, doc: Omit<ProjectDocument, "id" | "updatedAt">) => void;
+  deleteDocument: (projectId: string, documentId: string) => void;
 
   createMeeting: (input: {
     projectId: string;
@@ -306,6 +307,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     },
     []
   );
+
+  const deleteDocument = useCallback((projectId: string, documentId: string) => {
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) =>
+        p.id === projectId ? { ...p, documents: p.documents.filter((d) => d.id !== documentId) } : p
+      ),
+    }));
+  }, []);
 
   const createMeeting = useCallback(
     async (input: {
@@ -776,6 +786,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     createProject,
     deleteProject,
     addDocument,
+    deleteDocument,
     createMeeting,
     deleteMeeting,
     regenerateDraftPositions,
