@@ -102,39 +102,3 @@ export function matchMockIntentOrHold(
   };
 }
 
-function extractDayNumber(text: string): number | null {
-  // "8/27", "8월 27일" 같은 표현에서 뒷자리(일)를 우선 뽑는다.
-  const dateMatch = text.match(/(\d{1,2})\s*[/.\-월]\s*(\d{1,2})/);
-  if (dateMatch) return Number(dateMatch[2]);
-  const nums = text.match(/\d+/g);
-  return nums ? Number(nums[nums.length - 1]) : null;
-}
-
-/**
- * 기능 7(승인 범위 내 대안 조율) mock 평가.
- * 상대방이 제안한 대안이 승인된 안건의 양보 가능 범위/양보 불가 사항 안에 있는지
- * 아주 단순한 숫자 비교로 판단한다. 숫자를 못 찾으면 자동 판단하지 않고 사람 확인을 요구한다.
- */
-export function evaluateAlternativeMock(
-  proposalText: string,
-  position: Position
-): { withinRange: boolean | null; note: string } {
-  const proposedValue = extractDayNumber(proposalText);
-  const cap =
-    extractDayNumber(position.dealbreaker ?? "") ?? extractDayNumber(position.concessionRange ?? "");
-
-  if (proposedValue === null || cap === null) {
-    return {
-      withinRange: null,
-      note: "제안·승인 범위에서 비교할 숫자를 찾지 못했습니다. 답변 작성자가 직접 확인해주세요 (mock).",
-    };
-  }
-
-  const withinRange = proposedValue <= cap;
-  return {
-    withinRange,
-    note: withinRange
-      ? `제안된 값(${proposedValue})이 승인된 범위(최대 ${cap}) 안에 있어 조율 가능합니다.`
-      : `제안된 값(${proposedValue})이 양보 불가 한계(${cap})를 넘어 조율이 어렵습니다.`,
-  };
-}

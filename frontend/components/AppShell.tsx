@@ -23,11 +23,14 @@ import { useAuth } from "@/lib/auth";
  * 로컬(mock) 데이터를 모아 보여주는 전역 화면(`/hold-items`, `/mandatory-reviews`)으로
  * 연결한다 — 배지 숫자와 같은 데이터 소스다.
  *
- * 알림(종 아이콘)은 백엔드에 이미 구현돼 있어서(GET /notifications 등) 실제로 연결했다.
- * 사이드바 프로필은 lib/auth.tsx의 실제 로그인 사용자(user.name/email)를 보여준다 —
- * 다만 알림/프로젝트/회의 등 백엔드 데이터 호출 자체는 여전히 고정 서비스 계정 토큰
- * (BACKEND_API_TOKEN)을 쓴다 — 로그인은 "누가 접속했는지"만 구분할 뿐, 사용자별 데이터
- * 분리는 이번 스코프 밖이다. [[tkzr-scope-decisions]]
+ * 알림(종 아이콘)은 백엔드에 이미 구현돼 있어서(GET /notifications 등) 로그인 세션 토큰으로
+ * 실제로 연결했다 — 사용자 본인의 알림함만 조회된다. 사이드바 프로필은 lib/auth.tsx의 실제
+ * 로그인 사용자(user.name/email)를 보여준다.
+ *
+ * 종 아이콘 자체엔 안 읽음 배지(빨간 점)를 안 띄운다 — 알림 on/off 설정이 아직 없어서
+ * (설정 화면 토글이 "준비 중") 안 읽은 알림이 자연스럽게 쌓이기만 하고, 그게 그대로 배지로
+ * 노출되면 실제로 사용자가 신경 쓸 필요 없는 알림까지 "확인 안 한 게 있다"는 인상을 준다.
+ * 패널을 열면 안 읽은 알림 목록과 "모두 읽음" 버튼은 그대로 보인다.
  */
 
 interface NotificationItem {
@@ -181,7 +184,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               onClick={() => setNotifOpen((v) => !v)}
             >
               <img src="/icons/bell.svg" alt="알림" />
-              {unreadCount > 0 && <span className="app-notif-dot">{unreadCount}</span>}
             </button>
 
             {notifOpen && (

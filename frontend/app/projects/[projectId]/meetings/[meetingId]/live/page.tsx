@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { EmptyState, Card } from "@/components/Card";
 import { HoldStatusBadge, MeetingStatusBadge } from "@/components/Badge";
-import { evaluateAlternativeMock } from "@/lib/mockAi";
 import { AgoraConnectionStatus, AgoraVoiceSession, RemoteParticipant, TranscriptChunk } from "@/lib/agoraRtc";
 import type { MatchResult, Speaker, TranscriptEntry } from "@/lib/types";
 
@@ -29,8 +28,8 @@ const VOICE_STATUS_DOT: Record<AgoraConnectionStatus, "neutral" | "warn" | "succ
  *  - 하단 컨트롤 바(22:2046): 음소거/카메라 끄기/링크/종료 버튼 + 우측 상태 배지
  *
  * 기존 기능은 전부 그대로 유지했다 (백엔드 동기화·시작·종료, Agora 음성 연결, 음소거,
- * 10초 숫자확인 카운트다운/자동보류, 전사 매칭 결과, 승인 범위 내 대안 조율 평가,
- * 보류함) — 이번 작업은 재스킨/리플로우이지 로직 재작성이 아니다.
+ * 10초 숫자확인 카운트다운/자동보류, 전사 매칭 결과, 보류함) — 이번 작업은 재스킨/리플로우이지
+ * 로직 재작성이 아니다.
  *
  * Figma 원본과 다르게 처리했거나 생략한 부분:
  *  - 상단 "나가기" 버튼 뒤에 있던 확인 팝업(회의 나가기, 22:9999 — "AI가 계속 대리
@@ -52,8 +51,8 @@ const VOICE_STATUS_DOT: Record<AgoraConnectionStatus, "neutral" | "warn" | "succ
  *  - 메시지별 상태 태그(🔢 숫자 확인 / ✅ 확인됨 / ❌ 거부됨 / ⏱ 미응답 / ⏸ 보류 /
  *    ⚠ 제한 전달)는 Figma 실시간 대화 패널에 있던 배지 패턴을 그대로 옮기되, 그
  *    아래엔 실제 사유·근거·10초 O/X 확인 버튼 등 기존 로직을 전부 유지했다.
- *  - "승인 범위 내 대안 조율"과 "보류함"은 Figma "회의진행중" 화면 자체에는 대응
- *    UI가 없어서, 다크 콜 프레임 아래에 기존 라이트 톤 카드 그대로 이어붙였다.
+ *  - "보류함"은 Figma "회의진행중" 화면 자체에는 대응 UI가 없어서, 다크 콜 프레임 아래에
+ *    기존 라이트 톤 카드 그대로 이어붙였다.
  *
  * LiveAvatar(HeyGen) 연동: 백엔드가 Agora join 요청에 avatar 블록을 넣어두면(설정
  * 안 하면 기존처럼 음성 전용), 아바타가 별도 RTC 참가자(uid 9998)로 join해서 비디오를
@@ -73,11 +72,6 @@ export default function LiveMeetingPage({
 
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [proposalTopic, setProposalTopic] = useState<string>("");
-  const [proposalText, setProposalText] = useState("");
-  const [proposals, setProposals] = useState<
-    { id: string; topic: string; text: string; withinRange: boolean | null; note: string }[]
-  >([]);
 
   // 백엔드(MAiTE-BE)가 소유한 Agora 연동으로 전환했다 — 백엔드가 안건 기반 시스템
   // 프롬프트를 만들고 자기 소유의 Agora Conversational AI Agent를 채널에 join시킨다.
@@ -338,17 +332,6 @@ export default function LiveMeetingPage({
     }
   };
 
-  const handleEvaluateProposal = () => {
-    const position = approvedPositions.find((p) => p.topic === proposalTopic);
-    if (!position || !proposalText.trim()) return;
-    const result = evaluateAlternativeMock(proposalText.trim(), position);
-    setProposals((prev) => [
-      { id: `${Date.now()}`, topic: position.topic, text: proposalText.trim(), ...result },
-      ...prev,
-    ]);
-    setProposalText("");
-  };
-
   return (
     <div>
       <div className="breadcrumb">
@@ -561,87 +544,27 @@ export default function LiveMeetingPage({
         )}
       </div>
 
-      <div className="two-col">
-        <div>
-          <section className="section">
-            <h2>승인 범위 내 대안 조율</h2>
-            <Card>
-              {approvedPositions.length === 0 ? (
-                <p className="muted">승인된 안건이 없어 대안 조율을 평가할 수 없습니다.</p>
-              ) : (
-                <>
-                  <div className="row">
-                    <select
-                      value={proposalTopic}
-                      onChange={(e) => setProposalTopic(e.target.value)}
-                      style={{ maxWidth: 220 }}
-                    >
-                      <option value="">관련 안건 선택</option>
-                      {approvedPositions.map((p) => (
-                        <option key={p.topic} value={p.topic}>
-                          {p.topic}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="text"
-                      value={proposalText}
-                      onChange={(e) => setProposalText(e.target.value)}
-                      placeholder="상대방이 제안한 대안 (예: 8/27로 확정하는 건 어떨까요?)"
-                      style={{ flex: 1 }}
-                    />
-                    <button
-                      className="btn"
-                      onClick={handleEvaluateProposal}
-                      disabled={!proposalTopic || !proposalText.trim()}
-                    >
-                      평가
-                    </button>
-                  </div>
-                  <div className="stack" style={{ marginTop: 12 }}>
-                    {proposals.map((p) => (
-                      <div key={p.id} className="row-between">
-                        <span>
-                          [{p.topic}] {p.text}
-                        </span>
-                        <span
-                          className={`badge badge-${p.withinRange === null ? "neutral" : p.withinRange ? "success" : "danger"}`}
-                        >
-                          {p.withinRange === null ? "판단 보류" : p.withinRange ? "조율 가능" : "조율 불가"}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+      <section className="section">
+        <h2>보류함 ({meeting.holdItems.length})</h2>
+        {meeting.holdItems.length === 0 ? (
+          <p className="muted">아직 보류된 항목이 없습니다.</p>
+        ) : (
+          meeting.holdItems.map((h) => (
+            <Card key={h.id} className={`hold-item-card status-${h.status}`}>
+              <div className="row-between">
+                <strong>{h.relatedTopic ?? "(주제 미상)"}</strong>
+                <HoldStatusBadge status={h.status} />
+              </div>
+              <p className="muted" style={{ marginTop: 4 }}>
+                {h.reason}
+              </p>
             </Card>
-          </section>
-        </div>
-
-        <aside>
-          <section className="section">
-            <h2>보류함 ({meeting.holdItems.length})</h2>
-            {meeting.holdItems.length === 0 ? (
-              <p className="muted">아직 보류된 항목이 없습니다.</p>
-            ) : (
-              meeting.holdItems.map((h) => (
-                <Card key={h.id} className={`hold-item-card status-${h.status}`}>
-                  <div className="row-between">
-                    <strong>{h.relatedTopic ?? "(주제 미상)"}</strong>
-                    <HoldStatusBadge status={h.status} />
-                  </div>
-                  <p className="muted" style={{ marginTop: 4 }}>
-                    {h.reason}
-                  </p>
-                </Card>
-              ))
-            )}
-            <p className="field-hint">
-              후속 답변 작성·재오픈 관리는 미팅 종료 후 &ldquo;결과 검토&rdquo; 화면에서 진행합니다.
-            </p>
-          </section>
-        </aside>
-      </div>
+          ))
+        )}
+        <p className="field-hint">
+          후속 답변 작성·재오픈 관리는 미팅 종료 후 &ldquo;결과 검토&rdquo; 화면에서 진행합니다.
+        </p>
+      </section>
     </div>
   );
 }
