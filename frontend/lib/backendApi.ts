@@ -8,10 +8,15 @@
  * (GET /projects 같은 "내 것만" 엔드포인트가 무의미해짐). 호출부(app/api/backend/*
  * 라우트 핸들러)가 `requireSessionToken()`으로 꺼낸 값을 여기로 그대로 전달한다.
  *
- * 프로젝트/회의 준비(Agenda·Position) CRUD는 여전히 프론트 mock(localStorage)이 원본이다 —
- * 라이브 미팅을 실제로 시작할 때만, 그 시점의 로컬 데이터를 백엔드에 "동기화"해서
- * Agora Conversational AI(백엔드가 소유)가 실제 DB 데이터를 보고 응답하게 만든다.
- * (프로젝트 CRUD를 백엔드로 옮기는 작업은 [[tkzr-scope-decisions]] 참고 — 진행 중)
+ * 프로젝트(생성/조회/삭제)는 이제 이 백엔드가 원본이다 — project.id는 항상 백엔드가 발급한
+ * 실제 UUID를 그대로 쓴다(예전엔 로컬 mock id와 백엔드 id가 달라서 별도 매핑 파일이
+ * 필요했는데, 프로젝트 레벨에서는 이제 그 매핑이 필요 없다).
+ *
+ * 회의 준비(Agenda·Position)는 아직 프론트 mock(localStorage)이 원본이다 — 라이브 미팅을
+ * 실제로 시작할 때만, 그 시점의 로컬 데이터를 백엔드에 "동기화"해서 Agora Conversational
+ * AI(백엔드가 소유)가 실제 DB 데이터를 보고 응답하게 만든다. 이 부분의 로컬↔백엔드 id
+ * 매핑(lib/backendMeetingLinkStore.ts의 MEETING_STORE_FILE)은 여전히 필요하다.
+ * (전체 마이그레이션 진행 상황은 [[tkzr-scope-decisions]] 참고)
  */
 
 interface BackendEnvelope<T> {
@@ -59,28 +64,29 @@ async function backendFetch<T>(
 export interface BackendProject {
   id: string;
   name: string;
+  description: string | null;
+  createdAt: string;
 }
 
-export async function createBackendProject(token: string, name: string): Promise<BackendProject> {
-  return backendFetch<BackendProject>(token, "/projects", { method: "POST", body: { name } });
+/** 로그인한 사용자가 멤버로 속한 프로젝트만 돌아온다(백엔드가 JWT로 필터링). */
+export async function listBackendProjects(token: string): Promise<BackendProject[]> {
+  return backendFetch<BackendProject[]>(token, "/projects");
 }
 
-/**
- * 로컬(mock) 프로젝트에 대응하는 백엔드 실 프로젝트를 보장한다 — 이미 링크돼 있으면
- * 그대로 재사용하고, 없으면 지금 만들고 링크를 저장한다. sync-meeting/project-members/
- * git-sync 세 경로가 전부 이 함수 하나를 공유해서 중복 생성을 막는다.
- */
-export async function ensureBackendProjectId(
+export async function createBackendProject(
   token: string,
-  localProjectId: string,
-  projectName: string
-): Promise<string> {
-  const { getBackendProjectId, saveBackendProjectId } = await import("./backendMeetingLinkStore");
-  const existing = getBackendProjectId(localProjectId);
-  if (existing) return existing;
-  const project = await createBackendProject(token, projectName);
-  saveBackendProjectId(localProjectId, project.id);
-  return project.id;
+  name: string,
+  description: string
+): Promise<BackendProject> {
+  return backendFetch<BackendProject>(token, "/projects", {
+    method: "POST",
+    body: { name, description },
+  });
+}
+
+/** agenda(회의 준비)가 하나라도 있으면 백엔드가 409(PROJECT_HAS_AGENDAS)로 거부한다. */
+export async function deleteBackendProject(token: string, projectId: string): Promise<void> {
+  await backendFetch(token, `/projects/${projectId}`, { method: "DELETE" });
 }
 
 export interface BackendAgenda {

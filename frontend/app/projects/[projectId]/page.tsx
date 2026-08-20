@@ -80,7 +80,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
 
   const fetchBackendDocuments = async (projectId: string) => {
     try {
-      const res = await fetch(`/api/backend/documents?localProjectId=${projectId}`);
+      const res = await fetch(`/api/backend/documents?projectId=${projectId}`);
       const data = await res.json();
       if (res.ok) setBackendDocs(data.documents ?? []);
     } catch {
@@ -138,7 +138,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const fetchMembers = async (projectId: string) => {
     setMembersLoading(true);
     try {
-      const res = await fetch(`/api/backend/project-members?localProjectId=${projectId}`);
+      const res = await fetch(`/api/backend/project-members?projectId=${projectId}`);
       const data = await res.json();
       if (res.ok) setMembers(data.members);
     } finally {
@@ -199,8 +199,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          localProjectId: project.id,
-          projectName: project.name,
+          projectId: project.id,
           email: inviteEmail.trim(),
           role: inviteRole,
         }),
@@ -227,8 +226,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          localProjectId: project.id,
-          projectName: project.name,
+          projectId: project.id,
           repo: gitRepo.trim(),
           accessToken: gitToken.trim(),
         }),

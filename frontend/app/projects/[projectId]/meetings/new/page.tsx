@@ -65,7 +65,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
   useEffect(() => {
     if (!project) return;
     let cancelled = false;
-    fetch(`/api/backend/documents?localProjectId=${project.id}`)
+    fetch(`/api/backend/documents?projectId=${project.id}`)
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;

@@ -55,7 +55,7 @@ export default function MeetingDetailPage({
 
   useEffect(() => {
     if (!project) return;
-    fetch(`/api/backend/documents?localProjectId=${project.id}`)
+    fetch(`/api/backend/documents?projectId=${project.id}`)
       .then((res) => res.json())
       .then((data) => setBackendDocs(data.documents ?? []))
       .catch(() => {

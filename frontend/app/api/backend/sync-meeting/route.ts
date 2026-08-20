@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ensureBackendProjectId,
-  createBackendAgenda,
-  addAndApproveBackendPosition,
-  createBackendMeeting,
-} from "@/lib/backendApi";
+import { createBackendAgenda, addAndApproveBackendPosition, createBackendMeeting } from "@/lib/backendApi";
 import { getBackendLink, saveBackendLink } from "@/lib/backendMeetingLinkStore";
 import { getSessionToken } from "@/lib/session";
 
@@ -23,8 +18,8 @@ interface SyncPosition {
 
 interface SyncRequestBody {
   localMeetingId: string;
+  /** 백엔드 실 프로젝트 UUID(project.id) — [[tkzr-scope-decisions]] */
   projectId: string;
-  projectName: string;
   title: string;
   purpose: string;
   counterpartInfo: string;
@@ -60,11 +55,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // 프로젝트도 로컬 mock이라 백엔드에 대응 레코드가 없다 — 없으면 먼저 만들고 링크 저장.
-    const backendProjectId = await ensureBackendProjectId(token, body.projectId, body.projectName);
-
     const agenda = await createBackendAgenda(token, {
-      projectId: backendProjectId,
+      projectId: body.projectId,
       title: body.title,
       purpose: body.purpose,
       counterpartInfo: body.counterpartInfo,

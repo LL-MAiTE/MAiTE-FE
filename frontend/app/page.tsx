@@ -25,14 +25,24 @@ export default function HomeDashboardPage() {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  const handleCreate = (e: React.FormEvent) => {
+  const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    createProject(name.trim(), description.trim());
-    setName("");
-    setDescription("");
-    setShowForm(false);
+    setCreating(true);
+    setCreateError(null);
+    try {
+      await createProject(name.trim(), description.trim());
+      setName("");
+      setDescription("");
+      setShowForm(false);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "프로젝트 생성에 실패했습니다.");
+    } finally {
+      setCreating(false);
+    }
   };
 
   const stats = useMemo(
@@ -210,9 +220,14 @@ export default function HomeDashboardPage() {
                   placeholder="프로젝트에 대한 짧은 메모"
                 />
               </div>
+              {createError && (
+                <p className="field-hint" style={{ color: "var(--tone-danger-fg)" }}>
+                  {createError}
+                </p>
+              )}
               <div className="row">
-                <button type="submit" className="btn btn-primary">
-                  만들기
+                <button type="submit" className="btn btn-primary" disabled={creating}>
+                  {creating ? "만드는 중…" : "만들기"}
                 </button>
                 <button type="button" className="btn btn-ghost" onClick={() => setShowForm(false)}>
                   취소
@@ -243,7 +258,7 @@ export default function HomeDashboardPage() {
                         type="button"
                         className="btn btn-ghost btn-sm"
                         title="프로젝트 삭제"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.preventDefault();
                           e.stopPropagation();
                           if (
@@ -251,7 +266,11 @@ export default function HomeDashboardPage() {
                               `"${project.name}" 프로젝트를 삭제할까요? 딸린 회의 ${projectMeetings.length}건도 함께 삭제되며, 되돌릴 수 없습니다.`
                             )
                           ) {
-                            deleteProject(project.id);
+                            try {
+                              await deleteProject(project.id);
+                            } catch (err) {
+                              window.alert(err instanceof Error ? err.message : "프로젝트 삭제에 실패했습니다.");
+                            }
                           }
                         }}
                       >

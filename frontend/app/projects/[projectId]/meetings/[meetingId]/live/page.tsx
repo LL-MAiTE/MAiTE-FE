@@ -259,7 +259,6 @@ export default function LiveMeetingPage({
         body: JSON.stringify({
           localMeetingId: meeting.id,
           projectId: project.id,
-          projectName: project.name,
           title: meeting.title,
           purpose: meeting.purpose,
           counterpartInfo: meeting.counterpartInfo,

@@ -19,11 +19,16 @@ import {
   TranscriptReviewDecision,
 } from "./types";
 import { matchMockIntentOrHold } from "./mockAi";
+import { useAuth } from "./auth";
 
 /**
- * 클라이언트 사이드 "mock 백엔드". 실제 서버 API가 없으므로 React Context + localStorage로
- * 상태를 들고 있는다. 백엔드가 붙으면 이 안의 각 액션 함수를 fetch 호출로 바꾸고,
- * 컴포넌트 쪽 훅 사용법(useStore())은 그대로 유지하면 되도록 설계했다.
+ * 클라이언트 사이드 "mock 백엔드". 원래는 실 서버 API가 전혀 없어서 프로젝트/회의/문서를
+ * 전부 React Context + localStorage로 들고 있었는데, **프로젝트**는 이제 실제 백엔드가
+ * 원본이다 — createProject/deleteProject가 /api/backend/projects를 호출하고, 로그인
+ * 사용자가 바뀔 때마다 그 사람의 실제 프로젝트 목록을 가져와 documents/meetingIds(아직
+ * 로컬)만 기존 값에서 이어붙여 합친다. 회의/안건/문서는 아직 이 mock 구조 그대로다
+ * (진행 중인 마이그레이션 — [[tkzr-scope-decisions]] 참고). 컴포넌트 쪽 훅 사용법
+ * (useStore())은 마이그레이션 전후로 그대로 유지되도록 설계했다.
  */
 
 const STORAGE_KEY = "tkzr_store_v1";
@@ -139,8 +144,8 @@ interface StoreContextValue {
   getMeeting: (meetingId: string) => Meeting | undefined;
   getMeetingsByProject: (projectId: string) => Meeting[];
 
-  createProject: (name: string, description: string) => Project;
-  deleteProject: (projectId: string) => void;
+  createProject: (name: string, description: string) => Promise<Project>;
+  deleteProject: (projectId: string) => Promise<void>;
   addDocument: (projectId: string, doc: Omit<ProjectDocument, "id" | "updatedAt">) => void;
   deleteDocument: (projectId: string, documentId: string) => void;
 
@@ -206,6 +211,7 @@ const StoreContext = createContext<StoreContextValue | null>(null);
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<StoreState>(seedState);
   const [hydrated, setHydrated] = useState(false);
+  const { user } = useAuth();
 
   // 최초 mount 시 localStorage에 저장된 상태가 있으면 그걸로 덮어쓴다 (없으면 seed 유지)
   useEffect(() => {
@@ -231,6 +237,42 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     if (!hydrated) return;
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state, hydrated]);
+
+  // 로그인 사용자가 정해지면(또는 바뀌면) 그 사람의 실제 프로젝트 목록을 백엔드에서
+  // 가져온다. documents/meetingIds는 아직 로컬(mock)이 원본이라, 같은 id로 이미 로컬에
+  // 있던 프로젝트면 그 값을 그대로 이어붙이고 백엔드 목록에 없는 프로젝트(다른 계정의
+  // 예전 로컬 데이터 등)는 버린다.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    fetch("/api/backend/projects")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const backendProjects: { id: string; name: string; description: string | null }[] =
+          data.projects ?? [];
+        setState((prev) => {
+          const byId = new Map(prev.projects.map((p) => [p.id, p]));
+          const projects: Project[] = backendProjects.map((bp) => {
+            const existing = byId.get(bp.id);
+            return {
+              id: bp.id,
+              name: bp.name,
+              description: bp.description ?? "",
+              documents: existing?.documents ?? [],
+              meetingIds: existing?.meetingIds ?? [],
+            };
+          });
+          return { ...prev, projects };
+        });
+      })
+      .catch(() => {
+        // 실패해도 로컬 상태 그대로 유지 — 새로고침하면 다시 시도된다.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   const updateMeeting = useCallback((meetingId: string, updater: (m: Meeting) => Meeting) => {
     setState((prev) => ({
@@ -262,11 +304,19 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [state.meetings]
   );
 
-  const createProject = useCallback((name: string, description: string): Project => {
+  const createProject = useCallback(async (name: string, description: string): Promise<Project> => {
+    const res = await fetch("/api/backend/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? "프로젝트 생성에 실패했습니다.");
+
     const project: Project = {
-      id: genId("project"),
-      name,
-      description,
+      id: body.project.id,
+      name: body.project.name,
+      description: body.project.description ?? "",
       documents: [],
       meetingIds: [],
     };
@@ -275,7 +325,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // 프로젝트를 지우면 거기 딸린 미팅도 고아로 남지 않게 같이 지운다.
-  const deleteProject = useCallback((projectId: string) => {
+  // 백엔드가 agenda(회의 준비)가 이미 있는 프로젝트는 409로 거부하니, 그 경우 로컬 상태는
+  // 그대로 두고 에러를 그대로 던져서 호출부(화면)가 이유를 보여줄 수 있게 한다.
+  const deleteProject = useCallback(async (projectId: string) => {
+    const res = await fetch(`/api/backend/projects/${projectId}`, { method: "DELETE" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? "프로젝트 삭제에 실패했습니다.");
+
     setState((prev) => ({
       ...prev,
       projects: prev.projects.filter((p) => p.id !== projectId),
