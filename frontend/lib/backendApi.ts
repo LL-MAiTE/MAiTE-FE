@@ -499,3 +499,135 @@ export async function getBackendDocument(token: string, documentId: string): Pro
 export async function deleteBackendDocument(token: string, documentId: string): Promise<void> {
   await backendFetch(token, `/documents/${documentId}`, { method: "DELETE" });
 }
+
+// ---------------------------------------------------------------------------
+// 결과 검토 — 보류함 / 대화별 검토 / 필수검토
+//
+// "결과 검토" 화면(review/page.tsx)이 지금까지 프론트 로컬(mock) meeting.holdItems /
+// meeting.transcript만 보고 있어서, 실제 라이브 통화 중 쌓인 진짜 보류 항목이 화면에
+// 하나도 안 보이는 문제가 있었다 — 이 섹션이 그 실제 데이터를 붙이는 함수들이다.
+// backendMeetingId는 lib/backendMeetingLinkStore.ts로 조회한다(라이브를 한 번도 시작
+// 안 한 미팅은 링크가 없어서, 호출부가 이 경우 기존 로컬 mock 표시로 폴백해야 한다).
+// ---------------------------------------------------------------------------
+
+export interface BackendHoldItem {
+  id: string;
+  meetingId: string;
+  meetingLogId: string | null;
+  origin: "DURING_MEETING" | "POST_RE_HOLD";
+  reason: string | null;
+  status:
+    | "UNRESOLVED"
+    | "AWAITING_ANSWER"
+    | "CONFIRMED_IMMEDIATE"
+    | "CONFIRMED_TIMEOUT"
+    | "REOPENED"
+    | "NEEDS_REALTIME";
+  answerText: string | null;
+  answeredBy: string | null;
+  answeredAt: string | null;
+  deliveredToCounterpartAt: string | null;
+  reopenCount: number;
+  resolvedAt: string | null;
+  createdAt: string;
+}
+
+export async function listBackendHoldItems(token: string, backendMeetingId: string): Promise<BackendHoldItem[]> {
+  return backendFetch<BackendHoldItem[]>(token, `/meetings/${backendMeetingId}/hold-items`);
+}
+
+export async function answerBackendHoldItem(
+  token: string,
+  holdItemId: string,
+  answerText: string
+): Promise<BackendHoldItem> {
+  return backendFetch<BackendHoldItem>(token, `/hold-items/${holdItemId}/answer`, {
+    method: "POST",
+    body: { answerText },
+  });
+}
+
+/** 최대 2회 — 상한 초과 시 백엔드가 REOPEN_LIMIT_EXCEEDED로 거부한다(호출부는 UI에서
+ * reopenCount로 미리 막아두지만, 이중 안전장치로 에러 메시지를 그대로 보여주면 된다). */
+export async function reopenBackendHoldItem(token: string, holdItemId: string): Promise<BackendHoldItem> {
+  return backendFetch<BackendHoldItem>(token, `/hold-items/${holdItemId}/reopen`, { method: "POST" });
+}
+
+/** 타임아웃 확정은 원래 15분마다 도는 스케줄러가 24시간 뒤 자동으로 처리하지만, 데모/
+ * 테스트 중 "지금 바로 확정 처리"를 시뮬레이션하려고 이 배치용 PATCH를 수동으로도 쓴다. */
+export async function updateBackendHoldItemStatus(
+  token: string,
+  holdItemId: string,
+  status: "CONFIRMED_TIMEOUT" | "NEEDS_REALTIME"
+): Promise<BackendHoldItem> {
+  return backendFetch<BackendHoldItem>(token, `/hold-items/${holdItemId}`, {
+    method: "PATCH",
+    body: { status },
+  });
+}
+
+export interface BackendMeetingLog {
+  id: string;
+  meetingId: string;
+  transcriptId: string;
+  matchedMeetingPositionId: string | null;
+  /** AI가 실제로 답한(또는 보류 판단한) 원문 */
+  translatedText: string | null;
+  translatedCaption: string | null;
+  containsCriticalNumber: boolean;
+  limitationNote: string | null;
+  deliveredAt: string | null;
+  status: "PENDING" | "DELIVERED" | "ON_HOLD";
+}
+
+export async function listBackendMeetingLogs(token: string, backendMeetingId: string): Promise<BackendMeetingLog[]> {
+  return backendFetch<BackendMeetingLog[]>(token, `/meetings/${backendMeetingId}/meeting-logs`);
+}
+
+export interface BackendReviewAction {
+  id: string;
+  meetingLogId: string;
+  reviewerId: string;
+  action: "APPROVED" | "REVISED" | "WITHDRAWN" | "RE_HELD";
+  resultingHoldItemId: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+/** RE_HELD를 고르면 백엔드가 새 hold_item을 자동 생성한다(응답의 resultingHoldItemId) —
+ * 호출부가 이후 보류함 목록을 다시 불러오면 그 항목이 나타난다. */
+export async function createBackendReviewAction(
+  token: string,
+  meetingLogId: string,
+  action: "APPROVED" | "REVISED" | "WITHDRAWN" | "RE_HELD",
+  note?: string
+): Promise<BackendReviewAction> {
+  return backendFetch<BackendReviewAction>(token, `/meeting-logs/${meetingLogId}/review-actions`, {
+    method: "POST",
+    body: { action, note },
+  });
+}
+
+export interface BackendRequiredReview {
+  id: string;
+  meetingLogId: string;
+  designatedBy: string;
+  designatedAt: string;
+  status: "CONDITIONAL" | "CONFIRMED" | "REVISED" | "WITHDRAWN";
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
+
+export async function listBackendRequiredReviews(
+  token: string,
+  backendMeetingId: string
+): Promise<BackendRequiredReview[]> {
+  return backendFetch<BackendRequiredReview[]>(token, `/meetings/${backendMeetingId}/required-reviews`);
+}
+
+export async function confirmBackendRequiredReview(
+  token: string,
+  requiredReviewId: string
+): Promise<BackendRequiredReview> {
+  return backendFetch<BackendRequiredReview>(token, `/required-reviews/${requiredReviewId}`, { method: "PATCH" });
+}
