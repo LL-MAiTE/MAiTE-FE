@@ -1,12 +1,19 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 import { EmptyState } from "@/components/Card";
 import { Badge, ConfidenceBadge } from "@/components/Badge";
 import { Meeting } from "@/lib/types";
+
+interface BackendDocSummary {
+  id: string;
+  title: string;
+  path: string | null;
+  isCoreContext: boolean;
+}
 
 /**
  * 새 회의 만들기 — 5단계 위저드. Figma "새 회의 만들기 1~5"(1:2939, 1:4405, 1:5871,
@@ -50,6 +57,30 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
   const [error, setError] = useState<string | null>(null);
   const [createdMeeting, setCreatedMeeting] = useState<Meeting | null>(null);
 
+  // Git 연동으로 백엔드에 동기화된 문서 — 프로젝트 화면에서 직접 붙여넣은 로컬 문서와
+  // 별개 출처라 목록도 따로 불러오고, 선택 상태도 따로 들고 있는다.
+  const [backendDocs, setBackendDocs] = useState<BackendDocSummary[]>([]);
+  const [selectedBackendIds, setSelectedBackendIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!project) return;
+    let cancelled = false;
+    fetch(`/api/backend/documents?localProjectId=${project.id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const docs: BackendDocSummary[] = data.documents ?? [];
+        setBackendDocs(docs);
+        setSelectedBackendIds(docs.filter((d) => d.isCoreContext).map((d) => d.id));
+      })
+      .catch(() => {
+        // 연동 문서는 옵셔널 — 실패해도 로컬 문서만으로 계속 진행 가능
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project]);
+
   if (!project) {
     return <EmptyState title="프로젝트를 찾을 수 없습니다" />;
   }
@@ -62,6 +93,12 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
+  const toggleBackendDoc = (id: string) => {
+    setSelectedBackendIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const totalSelectedCount = selectedIds.length + selectedBackendIds.length;
+
   const runGeneration = async () => {
     setError(null);
     setStep(4);
@@ -73,10 +110,11 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
           purpose: purpose.trim(),
           counterpartInfo,
           selectedDocumentIds: selectedIds,
+          selectedBackendDocumentIds: selectedBackendIds,
         });
         setCreatedMeeting(meeting);
       } else {
-        await regenerateDraftPositions(createdMeeting.id, selectedIds);
+        await regenerateDraftPositions(createdMeeting.id, selectedIds, selectedBackendIds);
         const refreshed = getMeeting(createdMeeting.id);
         if (refreshed) setCreatedMeeting(refreshed);
       }
@@ -210,44 +248,80 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
         {step === 3 && (
           <div>
             <p className="notice-banner">최소 1개 선택 필수. ⭐ 핵심 문서는 기본 선택 상태입니다.</p>
-            {[...coreDocs, ...otherDocs].length === 0 ? (
+            {[...coreDocs, ...otherDocs].length === 0 && backendDocs.length === 0 ? (
               <EmptyState
                 title="선택할 문서가 없습니다"
-                description="먼저 프로젝트 문서함에 문서를 추가해주세요."
+                description="먼저 프로젝트 문서함에 문서를 추가하거나 Git 연동을 해주세요."
               />
             ) : (
-              [...coreDocs, ...otherDocs].map((doc) => {
-                const selected = selectedIds.includes(doc.id);
-                return (
-                  <div
-                    key={doc.id}
-                    className={`file-select-row ${selected ? "selected" : ""}`}
-                    onClick={() => toggleDoc(doc.id)}
-                  >
-                    <span className="list-row-icon">
-                      <img src="/icons/icon-document.svg" alt="" width={16} height={16} />
-                    </span>
-                    <div style={{ flex: 1 }}>
-                      <div className="row">
-                        <strong style={{ fontSize: 13 }}>{doc.title}</strong>
-                        {doc.isCoreContext && <Badge tone="info">⭐ 핵심</Badge>}
+              <>
+                {[...coreDocs, ...otherDocs].map((doc) => {
+                  const selected = selectedIds.includes(doc.id);
+                  return (
+                    <div
+                      key={doc.id}
+                      className={`file-select-row ${selected ? "selected" : ""}`}
+                      onClick={() => toggleDoc(doc.id)}
+                    >
+                      <span className="list-row-icon">
+                        <img src="/icons/icon-document.svg" alt="" width={16} height={16} />
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div className="row">
+                          <strong style={{ fontSize: 13 }}>{doc.title}</strong>
+                          {doc.isCoreContext && <Badge tone="info">⭐ 핵심</Badge>}
+                        </div>
+                        <p className="muted" style={{ margin: "2px 0 0" }}>
+                          {doc.content.slice(0, 60)}…
+                        </p>
                       </div>
-                      <p className="muted" style={{ margin: "2px 0 0" }}>
-                        {doc.content.slice(0, 60)}…
-                      </p>
+                      <span className="file-select-check">{selected ? "✓" : ""}</span>
                     </div>
-                    <span className="file-select-check">{selected ? "✓" : ""}</span>
-                  </div>
-                );
-              })
+                  );
+                })}
+
+                {backendDocs.length > 0 && (
+                  <>
+                    <p className="field-hint" style={{ marginTop: 12 }}>
+                      연동 문서 (Git 동기화)
+                    </p>
+                    {backendDocs.map((doc) => {
+                      const selected = selectedBackendIds.includes(doc.id);
+                      return (
+                        <div
+                          key={doc.id}
+                          className={`file-select-row ${selected ? "selected" : ""}`}
+                          onClick={() => toggleBackendDoc(doc.id)}
+                        >
+                          <span className="list-row-icon">
+                            <img src="/icons/icon-document.svg" alt="" width={16} height={16} />
+                          </span>
+                          <div style={{ flex: 1 }}>
+                            <div className="row">
+                              <strong style={{ fontSize: 13 }}>{doc.title}</strong>
+                              {doc.isCoreContext && <Badge tone="info">⭐ 핵심</Badge>}
+                            </div>
+                            {doc.path && (
+                              <p className="muted" style={{ margin: "2px 0 0" }}>
+                                {doc.path}
+                              </p>
+                            )}
+                          </div>
+                          <span className="file-select-check">{selected ? "✓" : ""}</span>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </>
             )}
-            <p className="field-hint">{selectedIds.length}개 선택됨</p>
+            <p className="field-hint">{totalSelectedCount}개 선택됨</p>
             {error && <p className="field-hint" style={{ color: "var(--tone-danger-fg)" }}>{error}</p>}
             <div className="row" style={{ justifyContent: "space-between", marginTop: 12 }}>
               <button className="btn" onClick={() => setStep(2)}>
                 이전
               </button>
-              <button className="btn btn-primary" disabled={selectedIds.length === 0} onClick={runGeneration}>
+              <button className="btn btn-primary" disabled={totalSelectedCount === 0} onClick={runGeneration}>
                 AI 안건 생성 ✨
               </button>
             </div>
@@ -258,7 +332,7 @@ export default function NewMeetingPage({ params }: { params: { projectId: string
           <div className="ai-generating">
             <div className="ai-generating-icon">✨</div>
             <h3>AI 안건 초안 생성 중…</h3>
-            <p className="muted">선택한 {selectedIds.length}개 문서를 분석하고 있습니다</p>
+            <p className="muted">선택한 {totalSelectedCount}개 문서를 분석하고 있습니다</p>
             <div className="ai-generating-checklist">
               <div className="ai-generating-checklist-item">📄 문서 파싱 및 맥락 분석</div>
               <div className="ai-generating-checklist-item">❓ 예상 질문 도출</div>

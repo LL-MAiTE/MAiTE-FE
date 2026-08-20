@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
 
 /**
  * 공용 앱 셸 (탑바 + 사이드바 + 메인 콘텐츠 영역).
@@ -17,11 +18,13 @@ import { useStore } from "@/lib/store";
  *
  * 보류항목/필수검토는 백엔드에 "여러 프로젝트 통틀어 조회" 엔드포인트가 아직 없어서,
  * 로컬(mock) 데이터를 모아 보여주는 전역 화면(`/hold-items`, `/mandatory-reviews`)으로
- * 연결한다 — 배지 숫자와 같은 데이터 소스다. 설정(`/settings`)은 대응하는 데이터가
- * 없어 정적 미리보기 화면으로 연결한다.
+ * 연결한다 — 배지 숫자와 같은 데이터 소스다.
  *
- * 알림(종 아이콘)은 백엔드에 이미 구현돼 있어서(GET /notifications 등) 실제로 연결했다 —
- * 로그인이 없는 스코프라 고정 서비스 계정의 알림함을 그대로 보여준다.
+ * 알림(종 아이콘)은 백엔드에 이미 구현돼 있어서(GET /notifications 등) 실제로 연결했다.
+ * 사이드바 프로필은 lib/auth.tsx의 실제 로그인 사용자(user.name/email)를 보여준다 —
+ * 다만 알림/프로젝트/회의 등 백엔드 데이터 호출 자체는 여전히 고정 서비스 계정 토큰
+ * (BACKEND_API_TOKEN)을 쓴다 — 로그인은 "누가 접속했는지"만 구분할 뿐, 사용자별 데이터
+ * 분리는 이번 스코프 밖이다. [[tkzr-scope-decisions]]
  */
 
 interface NotificationItem {
@@ -83,7 +86,9 @@ const NAV_ITEMS: {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { projects, meetings } = useStore();
+  const { user, logout } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notifOpen, setNotifOpen] = useState(false);
@@ -216,9 +221,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <aside className="app-sidebar">
           <div className="app-sidebar-profile-wrap">
             <div className="app-sidebar-profile">
-              <div className="app-sidebar-avatar">재</div>
-              <div className="app-sidebar-name">재현</div>
-              <div className="app-sidebar-role">Product Manager</div>
+              <div className="app-sidebar-avatar">{(user?.name ?? "?").charAt(0)}</div>
+              <div className="app-sidebar-name">{user?.name ?? "게스트"}</div>
+              <div className="app-sidebar-role">{user?.email ?? ""}</div>
               <div className="app-sidebar-status">
                 <span className="app-sidebar-status-dot" />
                 활동 중
@@ -233,6 +238,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <span>완료 회의</span>
                 </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm app-sidebar-logout"
+                onClick={() => {
+                  logout();
+                  router.replace("/login");
+                }}
+              >
+                로그아웃
+              </button>
             </div>
           </div>
 

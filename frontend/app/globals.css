@@ -797,6 +797,8 @@ label {
 
 input[type="text"],
 input[type="number"],
+input[type="email"],
+input[type="password"],
 textarea,
 select {
   width: 100%;
@@ -811,6 +813,8 @@ select {
 
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
 textarea:focus,
 select:focus {
   outline: none;
@@ -2244,4 +2248,79 @@ textarea {
   color: #f87171;
   font-size: 12px;
   margin: 0;
+}
+
+/* --- 로그인 / 회원가입 --------------------------------------------------- */
+
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-bg);
+  background-image: radial-gradient(circle at 85% -10%, rgba(156, 93, 252, 0.1), transparent 45%),
+    radial-gradient(circle at 10% 70%, rgba(88, 95, 245, 0.08), transparent 40%);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 32px 28px;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.auth-subtitle {
+  text-align: center;
+  margin: 0 0 24px;
+}
+
+.auth-error {
+  background: var(--tone-danger-bg);
+  color: var(--tone-danger-fg);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.auth-submit {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.auth-switch {
+  text-align: center;
+  margin: 20px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.auth-switch a {
+  color: var(--purple);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-switch a:hover {
+  text-decoration: underline;
+}
+
+.auth-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-sidebar-logout {
+  width: 100%;
+  margin-top: 10px;
 }

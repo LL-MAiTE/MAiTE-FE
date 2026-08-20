@@ -18,7 +18,6 @@ import {
   TranscriptEntry,
   TranscriptReviewDecision,
 } from "./types";
-import { seedMeetings, seedProjects } from "./mockSeed";
 import { matchMockIntentOrHold } from "./mockAi";
 
 /**
@@ -35,6 +34,40 @@ interface StoreState {
 }
 
 type AiPositionDraft = Omit<Position, "id" | "version" | "origin" | "approvalStatus">;
+
+interface SourceDoc {
+  title: string;
+  content: string;
+  isCoreContext: boolean;
+}
+
+/**
+ * Git 연동으로 백엔드에 동기화된 문서 하나의 본문을 가져온다. 목록 API(/api/backend/documents)는
+ * 무거운 content를 안 주기 때문에, AI 안건 생성 직전에 선택된 문서만 단건으로 가져온다.
+ * 실패한 문서는 조용히 제외한다 — 하나가 실패했다고 나머지 문서로 하는 생성 자체를 막을 이유는 없다.
+ */
+async function fetchBackendDocumentContent(id: string): Promise<SourceDoc | null> {
+  try {
+    const res = await fetch(`/api/backend/documents/${id}`);
+    const body = await res.json();
+    if (!res.ok || !body.document) return null;
+    return {
+      title: body.document.title,
+      content: body.document.content ?? "",
+      isCoreContext: Boolean(body.document.isCoreContext),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function resolveSourceDocs(
+  localDocs: SourceDoc[],
+  backendDocumentIds: string[]
+): Promise<SourceDoc[]> {
+  const backendDocs = await Promise.all(backendDocumentIds.map(fetchBackendDocumentContent));
+  return [...localDocs, ...backendDocs.filter((d): d is SourceDoc => d !== null)];
+}
 
 async function requestDraftPositions(input: {
   documents: Pick<ProjectDocument, "title" | "content" | "isCoreContext">[];
@@ -57,7 +90,11 @@ async function requestDraftPositions(input: {
 }
 
 function seedState(): StoreState {
-  return { projects: seedProjects, meetings: seedMeetings };
+  // 예전엔 여기서 데모용 mock 프로젝트/회의(lib/mockSeed.ts)를 채워서 시작했는데,
+  // 이제 실제 로그인 계정이 있어서 매 계정이 남의 가짜 데모 데이터를 보게 되는 게
+  // 더 어색하다. 빈 상태로 시작하고, 홈 화면의 EmptyState가 "새 프로젝트 만들기"로
+  // 안내한다.
+  return { projects: [], meetings: [] };
 }
 
 let idSeq = 0;
@@ -112,9 +149,14 @@ interface StoreContextValue {
     purpose: string;
     counterpartInfo: string;
     selectedDocumentIds: string[];
+    selectedBackendDocumentIds?: string[];
   }) => Promise<Meeting>;
   deleteMeeting: (meetingId: string) => void;
-  regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
+  regenerateDraftPositions: (
+    meetingId: string,
+    selectedDocumentIds: string[],
+    selectedBackendDocumentIds?: string[]
+  ) => Promise<void>;
 
   updatePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => void;
   setPositionApproval: (
@@ -263,17 +305,16 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       purpose: string;
       counterpartInfo: string;
       selectedDocumentIds: string[];
+      /** Git 연동으로 백엔드에 동기화된 문서 중 선택된 것 */
+      selectedBackendDocumentIds?: string[];
     }): Promise<Meeting> => {
       const project = state.projects.find((p) => p.id === input.projectId);
-      const docs = (project?.documents ?? []).filter((d) =>
-        input.selectedDocumentIds.includes(d.id)
-      );
+      const localDocs = (project?.documents ?? [])
+        .filter((d) => input.selectedDocumentIds.includes(d.id))
+        .map(({ title, content, isCoreContext }) => ({ title, content, isCoreContext }));
+      const documents = await resolveSourceDocs(localDocs, input.selectedBackendDocumentIds ?? []);
       const drafts = await requestDraftPositions({
-        documents: docs.map(({ title, content, isCoreContext }) => ({
-          title,
-          content,
-          isCoreContext,
-        })),
+        documents,
         meetingTitle: input.title,
         meetingPurpose: input.purpose,
         counterpartInfo: input.counterpartInfo,
@@ -293,6 +334,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         purpose: input.purpose,
         counterpartInfo: input.counterpartInfo,
         selectedDocumentIds: input.selectedDocumentIds,
+        selectedBackendDocumentIds: input.selectedBackendDocumentIds ?? [],
         status: "승인대기",
         positions,
         transcript: [],
@@ -315,18 +357,21 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const regenerateDraftPositions = useCallback(
-    async (meetingId: string, selectedDocumentIds: string[]): Promise<void> => {
+    async (
+      meetingId: string,
+      selectedDocumentIds: string[],
+      selectedBackendDocumentIds: string[] = []
+    ): Promise<void> => {
       const meeting = state.meetings.find((item) => item.id === meetingId);
       if (!meeting) throw new Error("회의를 찾을 수 없습니다.");
 
       const project = state.projects.find((item) => item.id === meeting.projectId);
-      const docs = (project?.documents ?? []).filter((doc) => selectedDocumentIds.includes(doc.id));
+      const localDocs = (project?.documents ?? [])
+        .filter((doc) => selectedDocumentIds.includes(doc.id))
+        .map(({ title, content, isCoreContext }) => ({ title, content, isCoreContext }));
+      const documents = await resolveSourceDocs(localDocs, selectedBackendDocumentIds);
       const drafts = await requestDraftPositions({
-        documents: docs.map(({ title, content, isCoreContext }) => ({
-          title,
-          content,
-          isCoreContext,
-        })),
+        documents,
         meetingTitle: meeting.title,
         meetingPurpose: meeting.purpose,
         counterpartInfo: meeting.counterpartInfo,
@@ -349,6 +394,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return {
           ...currentMeeting,
           selectedDocumentIds,
+          selectedBackendDocumentIds,
           positions: [...kept, ...newOnes],
         };
       });

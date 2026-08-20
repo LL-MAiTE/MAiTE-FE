@@ -86,7 +86,9 @@ export interface Meeting {
   title: string;
   purpose: string;
   counterpartInfo: string; // 국가/언어/소속 등 자유 텍스트
-  selectedDocumentIds: string[]; // 회의 생성 시 필수로 최소 1개 선택
+  selectedDocumentIds: string[]; // 회의 생성 시 필수로 최소 1개 선택 (프로젝트 화면에서 직접 추가한 로컬 문서)
+  /** Git 연동으로 백엔드에 동기화된 문서 중 선택된 것 (내용은 store가 필요할 때 /api/backend/documents/:id로 가져옴) */
+  selectedBackendDocumentIds?: string[];
   status: MeetingStatus;
   positions: Position[];
   transcript: TranscriptEntry[];

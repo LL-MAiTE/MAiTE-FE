@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import { AuthProvider } from "@/lib/auth";
 import { StoreProvider } from "@/lib/store";
-import { AppShell } from "@/components/AppShell";
+import { AppChrome } from "@/components/AppChrome";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,9 +13,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ko">
       <body>
-        <StoreProvider>
-          <AppShell>{children}</AppShell>
-        </StoreProvider>
+        <AuthProvider>
+          <StoreProvider>
+            <AppChrome>{children}</AppChrome>
+          </StoreProvider>
+        </AuthProvider>
       </body>
     </html>
   );
