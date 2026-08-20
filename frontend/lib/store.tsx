@@ -22,13 +22,15 @@ import { matchMockIntentOrHold } from "./mockAi";
 import { useAuth } from "./auth";
 
 /**
- * 클라이언트 사이드 "mock 백엔드". 원래는 실 서버 API가 전혀 없어서 프로젝트/회의/문서를
- * 전부 React Context + localStorage로 들고 있었는데, **프로젝트**는 이제 실제 백엔드가
- * 원본이다 — createProject/deleteProject가 /api/backend/projects를 호출하고, 로그인
- * 사용자가 바뀔 때마다 그 사람의 실제 프로젝트 목록을 가져와 documents/meetingIds(아직
- * 로컬)만 기존 값에서 이어붙여 합친다. 회의/안건/문서는 아직 이 mock 구조 그대로다
- * (진행 중인 마이그레이션 — [[tkzr-scope-decisions]] 참고). 컴포넌트 쪽 훅 사용법
- * (useStore())은 마이그레이션 전후로 그대로 유지되도록 설계했다.
+ * 클라이언트 사이드 "mock 백엔드". 원래는 실 서버 API가 전혀 없어서 프로젝트/문서/회의를
+ * 전부 React Context + localStorage로 들고 있었는데, 이제 **프로젝트**와 **문서**는
+ * 실제 백엔드가 원본이다:
+ *  - createProject/deleteProject가 /api/backend/projects를 호출하고, 로그인 사용자가
+ *    바뀔 때마다 그 사람의 실제 프로젝트 목록을 가져온다.
+ *  - addDocument/deleteDocument가 /api/backend/documents를 호출한다 — 수동 업로드든
+ *    Git 연동이든 이제 구분 없이 같은 API(source_document)를 쓴다.
+ * 회의/안건은 아직 이 mock 구조 그대로다(진행 중인 마이그레이션 — [[tkzr-scope-decisions]]
+ * 참고). 컴포넌트 쪽 훅 사용법(useStore())은 마이그레이션 전후로 그대로 유지되도록 설계했다.
  */
 
 const STORAGE_KEY = "tkzr_store_v1";
@@ -47,9 +49,9 @@ interface SourceDoc {
 }
 
 /**
- * Git 연동으로 백엔드에 동기화된 문서 하나의 본문을 가져온다. 목록 API(/api/backend/documents)는
- * 무거운 content를 안 주기 때문에, AI 안건 생성 직전에 선택된 문서만 단건으로 가져온다.
- * 실패한 문서는 조용히 제외한다 — 하나가 실패했다고 나머지 문서로 하는 생성 자체를 막을 이유는 없다.
+ * 문서 하나의 본문을 가져온다. 목록 API(/api/backend/documents)는 무거운 content를 안
+ * 주기 때문에, AI 안건 생성 직전에 선택된 문서만 단건으로 가져온다. 실패한 문서는
+ * 조용히 제외한다 — 하나가 실패했다고 나머지 문서로 하는 생성 자체를 막을 이유는 없다.
  */
 async function fetchBackendDocumentContent(id: string): Promise<SourceDoc | null> {
   try {
@@ -66,16 +68,13 @@ async function fetchBackendDocumentContent(id: string): Promise<SourceDoc | null
   }
 }
 
-async function resolveSourceDocs(
-  localDocs: SourceDoc[],
-  backendDocumentIds: string[]
-): Promise<SourceDoc[]> {
-  const backendDocs = await Promise.all(backendDocumentIds.map(fetchBackendDocumentContent));
-  return [...localDocs, ...backendDocs.filter((d): d is SourceDoc => d !== null)];
+async function resolveSourceDocs(documentIds: string[]): Promise<SourceDoc[]> {
+  const docs = await Promise.all(documentIds.map(fetchBackendDocumentContent));
+  return docs.filter((d): d is SourceDoc => d !== null);
 }
 
 async function requestDraftPositions(input: {
-  documents: Pick<ProjectDocument, "title" | "content" | "isCoreContext">[];
+  documents: SourceDoc[];
   meetingTitle: string;
   meetingPurpose: string;
   counterpartInfo: string;
@@ -146,8 +145,14 @@ interface StoreContextValue {
 
   createProject: (name: string, description: string) => Promise<Project>;
   deleteProject: (projectId: string) => Promise<void>;
-  addDocument: (projectId: string, doc: Omit<ProjectDocument, "id" | "updatedAt">) => void;
-  deleteDocument: (projectId: string, documentId: string) => void;
+  /** 문서 목록을 백엔드에서 다시 가져와 project.documents를 갱신한다 — 페이지 마운트 시,
+   * 또는 Git 연동 동기화처럼 store가 모르게 문서가 바뀌었을 때 호출한다. */
+  refreshProjectDocuments: (projectId: string) => Promise<void>;
+  addDocument: (
+    projectId: string,
+    doc: { title: string; content: string; isCoreContext: boolean }
+  ) => Promise<void>;
+  deleteDocument: (projectId: string, documentId: string) => Promise<void>;
 
   createMeeting: (input: {
     projectId: string;
@@ -155,14 +160,9 @@ interface StoreContextValue {
     purpose: string;
     counterpartInfo: string;
     selectedDocumentIds: string[];
-    selectedBackendDocumentIds?: string[];
   }) => Promise<Meeting>;
   deleteMeeting: (meetingId: string) => void;
-  regenerateDraftPositions: (
-    meetingId: string,
-    selectedDocumentIds: string[],
-    selectedBackendDocumentIds?: string[]
-  ) => Promise<void>;
+  regenerateDraftPositions: (meetingId: string, selectedDocumentIds: string[]) => Promise<void>;
 
   updatePosition: (meetingId: string, positionId: string, updates: Partial<Position>) => void;
   setPositionApproval: (
@@ -351,27 +351,68 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     }));
   }, []);
 
+  const applyBackendDocuments = useCallback((projectId: string, rawDocuments: unknown[]) => {
+    const documents: ProjectDocument[] = rawDocuments.map((raw) => {
+      const d = raw as {
+        id: string;
+        title: string;
+        path: string | null;
+        isCoreContext: boolean;
+        syncedAt: string | null;
+        lastModifiedAt: string | null;
+      };
+      return {
+        id: d.id,
+        title: d.title,
+        path: d.path,
+        isCoreContext: d.isCoreContext,
+        updatedAt: d.syncedAt ?? d.lastModifiedAt ?? new Date().toISOString(),
+      };
+    });
+    setState((prev) => ({
+      ...prev,
+      projects: prev.projects.map((p) => (p.id === projectId ? { ...p, documents } : p)),
+    }));
+  }, []);
+
+  const refreshProjectDocuments = useCallback(
+    async (projectId: string) => {
+      const res = await fetch(`/api/backend/documents?projectId=${projectId}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "문서 목록을 불러오지 못했습니다.");
+      applyBackendDocuments(projectId, body.documents ?? []);
+    },
+    [applyBackendDocuments]
+  );
+
   const addDocument = useCallback(
-    (projectId: string, doc: Omit<ProjectDocument, "id" | "updatedAt">) => {
-      const newDoc: ProjectDocument = { ...doc, id: genId("doc"), updatedAt: new Date().toISOString() };
+    async (projectId: string, doc: { title: string; content: string; isCoreContext: boolean }) => {
+      const res = await fetch("/api/backend/documents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, ...doc }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "문서 업로드에 실패했습니다.");
+      await refreshProjectDocuments(projectId);
+    },
+    [refreshProjectDocuments]
+  );
+
+  const deleteDocument = useCallback(
+    async (projectId: string, documentId: string) => {
+      const res = await fetch(`/api/backend/documents/${documentId}`, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? "문서 삭제에 실패했습니다.");
       setState((prev) => ({
         ...prev,
         projects: prev.projects.map((p) =>
-          p.id === projectId ? { ...p, documents: [...p.documents, newDoc] } : p
+          p.id === projectId ? { ...p, documents: p.documents.filter((d) => d.id !== documentId) } : p
         ),
       }));
     },
     []
   );
-
-  const deleteDocument = useCallback((projectId: string, documentId: string) => {
-    setState((prev) => ({
-      ...prev,
-      projects: prev.projects.map((p) =>
-        p.id === projectId ? { ...p, documents: p.documents.filter((d) => d.id !== documentId) } : p
-      ),
-    }));
-  }, []);
 
   const createMeeting = useCallback(
     async (input: {
@@ -380,14 +421,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       purpose: string;
       counterpartInfo: string;
       selectedDocumentIds: string[];
-      /** Git 연동으로 백엔드에 동기화된 문서 중 선택된 것 */
-      selectedBackendDocumentIds?: string[];
     }): Promise<Meeting> => {
-      const project = state.projects.find((p) => p.id === input.projectId);
-      const localDocs = (project?.documents ?? [])
-        .filter((d) => input.selectedDocumentIds.includes(d.id))
-        .map(({ title, content, isCoreContext }) => ({ title, content, isCoreContext }));
-      const documents = await resolveSourceDocs(localDocs, input.selectedBackendDocumentIds ?? []);
+      const documents = await resolveSourceDocs(input.selectedDocumentIds);
       const drafts = await requestDraftPositions({
         documents,
         meetingTitle: input.title,
@@ -409,7 +444,6 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         purpose: input.purpose,
         counterpartInfo: input.counterpartInfo,
         selectedDocumentIds: input.selectedDocumentIds,
-        selectedBackendDocumentIds: input.selectedBackendDocumentIds ?? [],
         status: "승인대기",
         positions,
         transcript: [],
@@ -428,23 +462,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
 
       return meeting;
     },
-    [state.projects]
+    []
   );
 
   const regenerateDraftPositions = useCallback(
-    async (
-      meetingId: string,
-      selectedDocumentIds: string[],
-      selectedBackendDocumentIds: string[] = []
-    ): Promise<void> => {
+    async (meetingId: string, selectedDocumentIds: string[]): Promise<void> => {
       const meeting = state.meetings.find((item) => item.id === meetingId);
       if (!meeting) throw new Error("회의를 찾을 수 없습니다.");
 
-      const project = state.projects.find((item) => item.id === meeting.projectId);
-      const localDocs = (project?.documents ?? [])
-        .filter((doc) => selectedDocumentIds.includes(doc.id))
-        .map(({ title, content, isCoreContext }) => ({ title, content, isCoreContext }));
-      const documents = await resolveSourceDocs(localDocs, selectedBackendDocumentIds);
+      const documents = await resolveSourceDocs(selectedDocumentIds);
       const drafts = await requestDraftPositions({
         documents,
         meetingTitle: meeting.title,
@@ -469,12 +495,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         return {
           ...currentMeeting,
           selectedDocumentIds,
-          selectedBackendDocumentIds,
           positions: [...kept, ...newOnes],
         };
       });
     },
-    [state.meetings, state.projects, updateMeeting]
+    [state.meetings, updateMeeting]
   );
 
   const updatePosition = useCallback(
@@ -841,6 +866,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     getMeetingsByProject,
     createProject,
     deleteProject,
+    refreshProjectDocuments,
     addDocument,
     deleteDocument,
     createMeeting,

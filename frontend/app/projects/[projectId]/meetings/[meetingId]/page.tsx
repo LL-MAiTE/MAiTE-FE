@@ -10,13 +10,6 @@ import { PositionCard } from "@/components/PositionCard";
 import { FIELD_LABELS } from "@/lib/labels";
 import { Position, PositionField } from "@/lib/types";
 
-interface BackendDocSummary {
-  id: string;
-  title: string;
-  path: string | null;
-  isCoreContext: boolean;
-}
-
 const ALL_FIELDS: PositionField[] = [
   "answer",
   "preference",
@@ -35,6 +28,7 @@ export default function MeetingDetailPage({
   const {
     getProject,
     getMeeting,
+    refreshProjectDocuments,
     regenerateDraftPositions,
     setPositionApproval,
     updatePosition,
@@ -51,17 +45,11 @@ export default function MeetingDetailPage({
   const [showDocPicker, setShowDocPicker] = useState(false);
   const [regeneratingDrafts, setRegeneratingDrafts] = useState(false);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
-  const [backendDocs, setBackendDocs] = useState<BackendDocSummary[]>([]);
 
   useEffect(() => {
-    if (!project) return;
-    fetch(`/api/backend/documents?projectId=${project.id}`)
-      .then((res) => res.json())
-      .then((data) => setBackendDocs(data.documents ?? []))
-      .catch(() => {
-        // 연동 문서 목록은 옵셔널 — 실패해도 로컬 문서 선택은 그대로 동작
-      });
-  }, [project]);
+    if (project) refreshProjectDocuments(project.id).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id]);
 
   const activePositions = useMemo(
     () => meeting?.positions.filter((p) => p.approvalStatus !== "삭제됨") ?? [],
@@ -128,10 +116,7 @@ export default function MeetingDetailPage({
 
       <section className="section">
         <div className="section-header">
-          <h2>
-            참고 문서 (
-            {meeting.selectedDocumentIds.length + (meeting.selectedBackendDocumentIds?.length ?? 0)}개 선택됨)
-          </h2>
+          <h2>참고 문서 ({meeting.selectedDocumentIds.length}개 선택됨)</h2>
           <button className="btn btn-sm" onClick={() => setShowDocPicker((v) => !v)}>
             파일 추가/제외
           </button>
@@ -155,11 +140,7 @@ export default function MeetingDetailPage({
                         setRegeneratingDrafts(true);
                         setRegenerationError(null);
                         try {
-                          await regenerateDraftPositions(
-                            meeting.id,
-                            next,
-                            meeting.selectedBackendDocumentIds ?? []
-                          );
+                          await regenerateDraftPositions(meeting.id, next);
                         } catch (error) {
                           setRegenerationError(
                             error instanceof Error ? error.message : "AI 안건 재생성에 실패했습니다."
@@ -172,42 +153,6 @@ export default function MeetingDetailPage({
                     <span>
                       <span className="checkbox-row-label">
                         {doc.title} {doc.isCoreContext && <Badge tone="info">핵심 맥락 md</Badge>}
-                      </span>
-                    </span>
-                  </label>
-                );
-              })}
-
-              {backendDocs.map((doc) => {
-                const checked = (meeting.selectedBackendDocumentIds ?? []).includes(doc.id);
-                return (
-                  <label key={doc.id} className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      disabled={regeneratingDrafts}
-                      onChange={async () => {
-                        const current = meeting.selectedBackendDocumentIds ?? [];
-                        const next = checked
-                          ? current.filter((id) => id !== doc.id)
-                          : [...current, doc.id];
-                        setRegeneratingDrafts(true);
-                        setRegenerationError(null);
-                        try {
-                          await regenerateDraftPositions(meeting.id, meeting.selectedDocumentIds, next);
-                        } catch (error) {
-                          setRegenerationError(
-                            error instanceof Error ? error.message : "AI 안건 재생성에 실패했습니다."
-                          );
-                        } finally {
-                          setRegeneratingDrafts(false);
-                        }
-                      }}
-                    />
-                    <span>
-                      <span className="checkbox-row-label">
-                        {doc.title} <Badge tone="neutral">연동</Badge>{" "}
-                        {doc.isCoreContext && <Badge tone="info">핵심 맥락 md</Badge>}
                       </span>
                     </span>
                   </label>
@@ -230,15 +175,6 @@ export default function MeetingDetailPage({
             return (
               <Badge key={id} tone={doc.isCoreContext ? "info" : "neutral"}>
                 {doc.title}
-              </Badge>
-            );
-          })}
-          {(meeting.selectedBackendDocumentIds ?? []).map((id) => {
-            const doc = backendDocs.find((d) => d.id === id);
-            if (!doc) return null;
-            return (
-              <Badge key={id} tone={doc.isCoreContext ? "info" : "neutral"}>
-                {doc.title} (연동)
               </Badge>
             );
           })}

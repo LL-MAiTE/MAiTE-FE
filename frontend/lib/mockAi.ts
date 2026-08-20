@@ -1,132 +1,19 @@
-import {
-  ConfidenceLevel,
-  MatchResult,
-  NUMBER_CONFIRMATION_TIMEOUT_SECONDS,
-  Position,
-  PositionField,
-  ProjectDocument,
-} from "./types";
+import { MatchResult, NUMBER_CONFIRMATION_TIMEOUT_SECONDS, Position } from "./types";
 import { FIELD_LABELS } from "./labels";
 
 /**
  * ⚠️ MOCK AI 로직 — 실제 OpenAI 호출을 하지 않는 키워드 기반 휴리스틱이다.
  *
- * 프론트엔드를 백엔드 없이 개발/데모하기 위한 임시 구현이며, 규칙(질문 성격에 맞는
- * 필드만 채우기, 근거 없으면 만들지 않기, 불확실하면 보류)의 "형태"만 흉내낸다.
- * 실제 판단 품질이 검증된 로직은 `../ai-core/src/generateDraftPositions.ts`와
- * `../ai-core/src/matchIntentOrHold.ts`에 있다 — 백엔드가 붙으면 이 파일의 두 함수를
- * 그 함수들을 호출하는 API 클라이언트 코드로 교체하면 된다 (입출력 타입은 동일하게 맞춰둠).
+ * 실시간 라이브 화면의 "질문 시뮬레이션" 입력이, 실제 AI 호출(/api/match-intent)이
+ * 실패했을 때만 쓰는 안전망이다(lib/store.tsx의 askQuestion 참고) — 데모가 API 키
+ * 문제 등으로 완전히 끊기지 않게 하기 위함이지, 가짜 데이터를 보여주는 용도가 아니다.
+ * 실제 판단 품질이 검증된 로직은 `../ai-core/src/matchIntentOrHold.ts`에 있다.
+ *
+ * (문서 근거로 안건 초안을 만드는 mock 함수가 예전에 여기 같이 있었는데, 실제
+ * ai-core/generateDraftPositions.ts + 백엔드 문서 API로 완전히 대체돼서 지웠다.)
  */
 
 const CONTAINS_NUMBER_REGEX = /\d/;
-
-let seq = 0;
-function nextId(prefix: string): string {
-  seq += 1;
-  return `${prefix}_${Date.now().toString(36)}_${seq}`;
-}
-
-function extractFirstSentence(text: string): string {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^[^.!?。]+[.!?。]?/);
-  return (match ? match[0] : trimmed).trim();
-}
-
-interface DraftTemplate {
-  keywords: string[];
-  topic: string;
-  questionText: string;
-  fields: Partial<Record<PositionField, string | number>>;
-  confidenceLevel: ConfidenceLevel;
-}
-
-// 문서 내용에 특정 키워드가 있으면 그에 맞는 안건 템플릿을 매칭시키는 아주 단순한 mock.
-const TEMPLATES: DraftTemplate[] = [
-  {
-    keywords: ["마감일", "deadline"],
-    topic: "api_deadline",
-    questionText: "일정을 앞당기거나 늦출 수 있나요?",
-    fields: {},
-    confidenceLevel: "문서근거명확",
-  },
-  {
-    keywords: ["가격", "인상", "price"],
-    topic: "price_negotiation",
-    questionText: "가격 조건을 조정할 수 있나요?",
-    fields: {},
-    confidenceLevel: "문서근거명확",
-  },
-  {
-    keywords: ["계약", "contract"],
-    topic: "contract_terms",
-    questionText: "계약 조건 변경이 가능한가요?",
-    fields: {},
-    confidenceLevel: "추정",
-  },
-];
-
-/**
- * 선택된 문서를 근거로 안건 초안을 만든다 (mock).
- * - isCoreContext=true 문서는 sourceDocumentTitle로 쓰지 않는다 (큰 틀 참고 목적).
- * - 근거 문서에서 날짜/수치가 보이면 concessionRange·dealbreaker 위주로,
- *   그렇지 않으면 answer 하나만 채우는 식으로 "질문 성격에 맞는 필드만" 흉내낸다.
- */
-export function generateMockDraftPositions(
-  documents: ProjectDocument[],
-  _meetingTitle: string,
-  _meetingPurpose: string
-): Position[] {
-  const referenceDocs = documents.filter((d) => !d.isCoreContext);
-  const positions: Position[] = [];
-
-  for (const doc of referenceDocs) {
-    const lower = doc.content.toLowerCase();
-    const template = TEMPLATES.find((t) =>
-      t.keywords.some((k) => lower.includes(k.toLowerCase()))
-    );
-
-    if (!template) continue; // 근거 없는 안건은 만들지 않는다.
-
-    const hasNumbers = CONTAINS_NUMBER_REGEX.test(doc.content);
-    const sentence = extractFirstSentence(doc.content);
-
-    const activeFields: PositionField[] = [];
-    const base: Position = {
-      id: nextId("pos"),
-      topic: template.topic,
-      version: 1,
-      origin: "ai",
-      approvalStatus: "초안",
-      questionText: template.questionText,
-      answer: null,
-      preference: null,
-      concessionRange: null,
-      dealbreaker: null,
-      priority: null,
-      scheduleConstraint: null,
-      activeFields: [],
-      confidenceLevel: template.confidenceLevel,
-      sourceDocumentTitle: doc.title,
-      reasoning: `"${doc.title}"에서 "${template.keywords[0]}" 관련 내용을 찾아 생성 (mock).`,
-    };
-
-    if (hasNumbers) {
-      base.concessionRange = sentence;
-      activeFields.push("concessionRange");
-    } else {
-      base.answer = sentence;
-      activeFields.push("answer");
-    }
-    base.activeFields = activeFields;
-
-    // topic 중복 방지 (mock이라 단순하게 처리)
-    if (!positions.some((p) => p.topic === base.topic)) {
-      positions.push(base);
-    }
-  }
-
-  return positions.slice(0, 6); // 규칙 4: 3~6개 정도로 생성
-}
 
 function buildResponseText(position: Position): string {
   const parts: string[] = [];

@@ -11,10 +11,16 @@
 // 기능 1: 프로젝트 문서
 // ---------------------------------------------------------------------------
 
+/**
+ * 목록/선택 화면에서 쓰는 문서 메타데이터. 백엔드가 원본이라(수동 업로드든 Git/Notion
+ * 연동이든 전부 source_document) content는 여기 안 들어있다 — 목록 API가 무거운 본문을
+ * 안 주기 때문. 본문이 필요하면(안건 생성 직전 등) lib/store.tsx가 문서 id로 단건 조회한다.
+ */
 export interface ProjectDocument {
   id: string;
   title: string;
-  content: string;
+  /** Git/Notion 연동 문서면 저장소 내 경로, 수동 업로드 문서면 null */
+  path: string | null;
   /** true면 "프로젝트 핵심 맥락 md" — 회의 생성 시 파일 선택 목록에 항상 우선 노출, AI 생성 시 항상 참고 */
   isCoreContext: boolean;
   updatedAt: string; // ISO date
@@ -86,9 +92,10 @@ export interface Meeting {
   title: string;
   purpose: string;
   counterpartInfo: string; // 국가/언어/소속 등 자유 텍스트
-  selectedDocumentIds: string[]; // 회의 생성 시 필수로 최소 1개 선택 (프로젝트 화면에서 직접 추가한 로컬 문서)
-  /** Git 연동으로 백엔드에 동기화된 문서 중 선택된 것 (내용은 store가 필요할 때 /api/backend/documents/:id로 가져옴) */
-  selectedBackendDocumentIds?: string[];
+  // 회의 생성 시 필수로 최소 1개 선택. 문서가 이제 전부 백엔드 원본이라(수동 업로드든
+  // Git 연동이든 동일한 source_document) 문서 출처 구분 없이 id만 담는다 — 내용은
+  // store가 필요할 때(안건 생성 직전) /api/backend/documents/:id로 가져온다.
+  selectedDocumentIds: string[];
   status: MeetingStatus;
   positions: Position[];
   transcript: TranscriptEntry[];

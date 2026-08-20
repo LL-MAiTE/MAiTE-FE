@@ -308,9 +308,9 @@ export async function syncBackendConnection(token: string, connectionId: string)
 }
 
 // ---------------------------------------------------------------------------
-// 문서 (Git/Notion 동기화 결과 조회·삭제) — 백엔드에 단건 조회/삭제 API가
-// 새로 생겨서(GET·DELETE /documents/:id) 연결한다. 목록 API는 무거운 content를
-// 안 주기 때문에, 본문은 클릭 시점에 단건 조회로 따로 받아온다.
+// 문서 — 수동 업로드든 Git/Notion 연동이든 전부 이 API 하나로 다룬다(source_document가
+// 원본). 목록 API는 무거운 content를 안 주기 때문에, 본문은 필요할 때 단건 조회로 따로
+// 받아온다(getBackendDocument).
 // ---------------------------------------------------------------------------
 
 export interface BackendDocument {
@@ -319,6 +319,7 @@ export interface BackendDocument {
   path: string | null;
   isCoreContext: boolean;
   syncedAt: string | null;
+  lastModifiedAt: string | null;
 }
 
 export async function listBackendDocuments(
@@ -326,6 +327,32 @@ export async function listBackendDocuments(
   backendProjectId: string
 ): Promise<BackendDocument[]> {
   return backendFetch<BackendDocument[]>(token, `/projects/${backendProjectId}/documents`);
+}
+
+/** 프로젝트 화면에서 직접 붙여넣은 문서를 업로드한다. isCoreContext는 업로드 API에
+ * 없어서(백엔드 UploadDocumentRequest가 title/content만 받음), 필요하면 업로드 직후
+ * updateBackendDocument로 한 번 더 반영한다. */
+export async function uploadBackendDocument(
+  token: string,
+  backendProjectId: string,
+  title: string,
+  content: string
+): Promise<BackendDocument> {
+  return backendFetch<BackendDocument>(token, `/projects/${backendProjectId}/documents`, {
+    method: "POST",
+    body: { title, content },
+  });
+}
+
+export async function updateBackendDocument(
+  token: string,
+  documentId: string,
+  isCoreContext: boolean
+): Promise<BackendDocument> {
+  return backendFetch<BackendDocument>(token, `/documents/${documentId}`, {
+    method: "PATCH",
+    body: { isCoreContext },
+  });
 }
 
 export interface BackendDocumentDetail extends BackendDocument {

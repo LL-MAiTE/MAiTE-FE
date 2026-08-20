@@ -17,10 +17,10 @@ import { Badge, MeetingStatusBadge } from "@/components/Badge";
  *  - "마일스톤" 패널 → "회의 현황" (상태별 실제 분포)
  *  - "최근 활동" → "최근 문서" (프로젝트 문서 실데이터)
  *
- * "팀원"과 "문서 소스 연동 — Git"은 백엔드에 이미 구현돼 있어서(GET/POST members,
- * 실제 GitHub API 기반 sync) 실제로 연결했다. Notion 연동은 백엔드도 아직 stub이라
- * 비활성으로 남겨뒀다. 프로젝트는 로컬 mock이 원본이라, 이 두 기능을 처음 쓰는
- * 순간에만 백엔드에 대응 프로젝트를 만든다(lib/backendApi.ts의 ensureBackendProjectId).
+ * "팀원"과 "문서"는 전부 실제 백엔드다 — 수동 업로드(MD 붙여넣기)든 Git 연동이든
+ * 같은 source_document라서 이제 목록/미리보기/삭제를 한 화면에서 통일해서 다룬다
+ * (예전엔 "로컬 문서"/"연동 문서" 두 섹션이 따로 있었다). Notion 연동은 백엔드도
+ * 아직 stub이라 비활성으로 남겨뒀다.
  */
 
 type Tab = "개요" | "회의" | "문서";
@@ -40,7 +40,14 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export default function ProjectDetailPage({ params }: { params: { projectId: string } }) {
-  const { getProject, getMeetingsByProject, addDocument, deleteDocument, deleteMeeting } = useStore();
+  const {
+    getProject,
+    getMeetingsByProject,
+    refreshProjectDocuments,
+    addDocument,
+    deleteDocument,
+    deleteMeeting,
+  } = useStore();
   const project = getProject(params.projectId);
   const meetings = getMeetingsByProject(params.projectId);
 
@@ -49,6 +56,8 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [isCoreContext, setIsCoreContext] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // 팀원
   const [members, setMembers] = useState<ProjectMember[]>([]);
@@ -66,30 +75,14 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
   const [gitError, setGitError] = useState<string | null>(null);
   const [gitResult, setGitResult] = useState<{ syncedCount: number; latestFiles: string[] } | null>(null);
 
-  // 연동 문서(Git/Notion) 목록 — 백엔드에 실제로 동기화된 문서를 조회/삭제
-  const [backendDocs, setBackendDocs] = useState<
-    { id: string; title: string; path: string | null }[]
-  >([]);
+  // 문서 미리보기(클릭 시 본문 조회) + 삭제 에러
   const [expandedDocId, setExpandedDocId] = useState<string | null>(null);
   const [expandedContent, setExpandedContent] = useState<string | null>(null);
   const [expandedLoading, setExpandedLoading] = useState(false);
   const [docActionError, setDocActionError] = useState<string | null>(null);
 
-  // 로컬(mock) 문서 목록 — 클릭 시 전체 내용 펼쳐보기 (이미 로컬에 다 있어서 API 호출 불필요)
-  const [expandedLocalDocId, setExpandedLocalDocId] = useState<string | null>(null);
-
-  const fetchBackendDocuments = async (projectId: string) => {
-    try {
-      const res = await fetch(`/api/backend/documents?projectId=${projectId}`);
-      const data = await res.json();
-      if (res.ok) setBackendDocs(data.documents ?? []);
-    } catch {
-      // 이 섹션은 옵셔널(아직 연동 안 했으면 빈 목록) — 실패해도 조용히 넘어감
-    }
-  };
-
   useEffect(() => {
-    if (project) fetchBackendDocuments(project.id);
+    if (project) refreshProjectDocuments(project.id).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
@@ -114,14 +107,11 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     }
   };
 
-  const handleDeleteBackendDoc = async (docId: string) => {
-    if (!confirm("이 문서를 삭제할까요?")) return;
+  const handleDeleteDoc = async (docId: string) => {
+    if (!project || !confirm("이 문서를 삭제할까요?")) return;
     setDocActionError(null);
     try {
-      const res = await fetch(`/api/backend/documents/${docId}`, { method: "DELETE" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      setBackendDocs((prev) => prev.filter((d) => d.id !== docId));
+      await deleteDocument(project.id, docId);
       if (expandedDocId === docId) {
         setExpandedDocId(null);
         setExpandedContent(null);
@@ -129,10 +119,6 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     } catch (err) {
       setDocActionError(err instanceof Error ? err.message : String(err));
     }
-  };
-
-  const handleToggleLocalDoc = (docId: string) => {
-    setExpandedLocalDocId((prev) => (prev === docId ? null : docId));
   };
 
   const fetchMembers = async (projectId: string) => {
@@ -173,20 +159,22 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
     );
   }
 
-  const handleUpload = (e: React.FormEvent) => {
+  const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !content.trim()) return;
-    addDocument(project.id, { title: title.trim(), content: content.trim(), isCoreContext });
-    setTitle("");
-    setContent("");
-    setIsCoreContext(false);
-    setShowUpload(false);
-  };
-
-  const handleDeleteLocalDoc = (docId: string) => {
-    if (!confirm("이 문서를 삭제할까요?")) return;
-    deleteDocument(project.id, docId);
-    if (expandedLocalDocId === docId) setExpandedLocalDocId(null);
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await addDocument(project.id, { title: title.trim(), content: content.trim(), isCoreContext });
+      setTitle("");
+      setContent("");
+      setIsCoreContext(false);
+      setShowUpload(false);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "문서 업로드에 실패했습니다.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -235,7 +223,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setGitResult(data);
       setGitToken("");
-      fetchBackendDocuments(project.id);
+      refreshProjectDocuments(project.id).catch(() => {});
     } catch (err) {
       setGitError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -505,55 +493,6 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
               </form>
             )}
 
-            {backendDocs.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <p className="field-hint" style={{ marginBottom: 8 }}>
-                  연동 문서 ({backendDocs.length}개) — 클릭하면 내용을 볼 수 있어요
-                </p>
-                {docActionError && (
-                  <p style={{ color: "var(--tone-danger-fg)", marginBottom: 8 }}>{docActionError}</p>
-                )}
-                <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-                  {backendDocs.map((doc) => (
-                    <li key={doc.id} className="card" style={{ padding: 12 }}>
-                      <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => handleToggleDocPreview(doc.id)}
-                          className="btn btn-sm btn-ghost"
-                          style={{ flex: 1, textAlign: "left", justifyContent: "flex-start" }}
-                        >
-                          📄 {doc.title}
-                          {doc.path && doc.path !== doc.title ? ` (${doc.path})` : ""}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm btn-danger"
-                          onClick={() => handleDeleteBackendDoc(doc.id)}
-                        >
-                          삭제
-                        </button>
-                      </div>
-                      {expandedDocId === doc.id && (
-                        <pre
-                          style={{
-                            marginTop: 8,
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                            fontSize: 13,
-                            maxHeight: 320,
-                            overflowY: "auto",
-                          }}
-                        >
-                          {expandedLoading ? "불러오는 중…" : expandedContent}
-                        </pre>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
             {showUpload && (
               <form onSubmit={handleUpload}>
                 <div className="field">
@@ -592,9 +531,12 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                     </span>
                   </label>
                 </div>
+                {uploadError && (
+                  <p style={{ color: "var(--tone-danger-fg)", marginBottom: 8 }}>{uploadError}</p>
+                )}
                 <div className="row">
-                  <button type="submit" className="btn btn-primary">
-                    추가
+                  <button type="submit" className="btn btn-primary" disabled={uploading}>
+                    {uploading ? "추가하는 중…" : "추가"}
                   </button>
                   <button type="button" className="btn btn-ghost" onClick={() => setShowUpload(false)}>
                     취소
@@ -606,11 +548,12 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
 
           <h3 style={{ marginTop: 20 }}>문서 목록 ({project.documents.length}개)</h3>
           <p className="field-hint" style={{ marginTop: -6 }}>
-            ⭐ 표시 문서는 회의 생성 시 우선 노출됩니다
+            ⭐ 표시 문서는 회의 생성 시 우선 노출됩니다. 클릭하면 내용을 볼 수 있어요.
           </p>
+          {docActionError && <p style={{ color: "var(--tone-danger-fg)", marginBottom: 8 }}>{docActionError}</p>}
           {project.documents.length === 0 ? (
             <EmptyState
-              title="아직 연동된 문서가 없습니다"
+              title="아직 문서가 없습니다"
               description="핵심 맥락 md를 먼저 추가하면 AI가 프로젝트 큰 틀을 이해하는 데 도움이 됩니다."
             />
           ) : (
@@ -619,7 +562,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                 <div className="row-between">
                   <button
                     type="button"
-                    onClick={() => handleToggleLocalDoc(doc.id)}
+                    onClick={() => handleToggleDocPreview(doc.id)}
                     className="row"
                     style={{
                       alignItems: "flex-start",
@@ -639,24 +582,21 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                         <strong>{doc.title}</strong>
                         {doc.isCoreContext && <Badge tone="info">핵심</Badge>}
                       </div>
-                      <p className="muted" style={{ marginTop: 4 }}>
-                        {doc.content.slice(0, 120)}
-                        {doc.content.length > 120 ? "…" : ""}
-                      </p>
+                      {doc.path && doc.path !== doc.title && (
+                        <p className="muted" style={{ marginTop: 4 }}>
+                          {doc.path}
+                        </p>
+                      )}
                     </div>
                   </button>
                   <div className="row" style={{ alignItems: "flex-start", gap: 8 }}>
                     <span className="muted">{new Date(doc.updatedAt).toLocaleDateString("ko-KR")}</span>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-danger"
-                      onClick={() => handleDeleteLocalDoc(doc.id)}
-                    >
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDeleteDoc(doc.id)}>
                       삭제
                     </button>
                   </div>
                 </div>
-                {expandedLocalDocId === doc.id && (
+                {expandedDocId === doc.id && (
                   <pre
                     style={{
                       marginTop: 8,
@@ -667,7 +607,7 @@ export default function ProjectDetailPage({ params }: { params: { projectId: str
                       overflowY: "auto",
                     }}
                   >
-                    {doc.content}
+                    {expandedLoading ? "불러오는 중…" : expandedContent}
                   </pre>
                 )}
               </Card>
