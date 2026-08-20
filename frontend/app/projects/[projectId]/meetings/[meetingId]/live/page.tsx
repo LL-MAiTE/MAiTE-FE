@@ -105,13 +105,27 @@ export default function LiveMeetingPage({
   // 현재 "말하는 중"(아직 final 아님)인 발화가 있으면 그 항목을 계속 갱신하고, final이
   // 되거나 화자가 바뀌면 새 항목을 시작한다.
   const inProgressRef = useRef<{ speaker: TranscriptChunk["speaker"]; id: string } | null>(null);
+  // Agora가 같은 확정 발화(특히 AI 쪽)를 stream-message로 두 번 이상 중복 전송하는 게
+  // 실사용 중 확인됨 — 매번 새 줄로 쌓으면 같은 문장이 계속 도배된다. 방금 확정한
+  // (화자, 텍스트) 조합을 기억해뒀다가 완전히 같은 확정 발화가 또 오면 무시한다.
+  const lastFinalizedRef = useRef<{ speaker: TranscriptChunk["speaker"]; text: string } | null>(null);
 
   const handleTranscriptChunk = (chunk: TranscriptChunk) => {
+    if (
+      chunk.isFinal &&
+      lastFinalizedRef.current?.speaker === chunk.speaker &&
+      lastFinalizedRef.current?.text === chunk.text
+    ) {
+      return;
+    }
     setLiveTranscript((prev) => {
       const inProgress = inProgressRef.current;
       if (inProgress && inProgress.speaker === chunk.speaker) {
         const updated = prev.map((e) => (e.id === inProgress.id ? { ...e, text: chunk.text } : e));
-        if (chunk.isFinal) inProgressRef.current = null;
+        if (chunk.isFinal) {
+          inProgressRef.current = null;
+          lastFinalizedRef.current = { speaker: chunk.speaker, text: chunk.text };
+        }
         return updated;
       }
       const id = `live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -123,7 +137,12 @@ export default function LiveMeetingPage({
         text: chunk.text,
         translatedText: null,
       };
-      inProgressRef.current = chunk.isFinal ? null : { speaker: chunk.speaker, id };
+      if (chunk.isFinal) {
+        inProgressRef.current = null;
+        lastFinalizedRef.current = { speaker: chunk.speaker, text: chunk.text };
+      } else {
+        inProgressRef.current = { speaker: chunk.speaker, id };
+      }
       return [...prev, entry];
     });
   };
@@ -468,7 +487,7 @@ export default function LiveMeetingPage({
             </div>
             {backendMeetingId ? (
               <p className="live-transcript-empty" style={{ padding: "8px 16px" }}>
-                🎙️ 실제 음성 대화가 실시간으로 표시됩니다 (3초 간격 갱신)
+                🎙️ 실제 음성 대화가 실시간으로 표시됩니다
               </p>
             ) : (
               <form onSubmit={handleAsk} className="live-ask-form">

@@ -186,15 +186,30 @@ export class AgoraVoiceSession {
             this.transcriptChunkBuffer.delete(msgId);
 
             const msg = JSON.parse(atob(fullB64));
-            const object = msg.object ?? "";
+            const object: string = msg.object ?? "";
             const text = msg.text ?? "";
+            // eslint-disable-next-line no-console
+            console.log(`[Agora] stream-message 원문 object="${object}" final=${msg.final} turn_status=${msg.turn_status} text="${text}"`);
             if (!text) return;
-            if (object !== "assistant.transcription" && object !== "user.transcription") return;
+            const isAgent = object.startsWith("assistant");
+            const isUser = object.startsWith("user");
+            if (!isAgent && !isUser) return;
+
+            // ⚠️ 진짜 원인: user 메시지는 boolean final 필드를 쓰는데, assistant 메시지는
+            // final이 아예 없고 대신 정수 turn_status(0=진행중, 1=종료, 2=중단)를 쓴다
+            // (Agora 공식 문서로 확인). 그동안 이 코드가 두 타입 다 msg.final만 봤어서,
+            // assistant 메시지는 final이 항상 undefined → isFinal이 절대 true가 안 돼서
+            // inProgressRef가 첫 AI 발화 이후로 다시는 안 풀리는 문제가 있었다 — 그 결과
+            // AI 대사가 새 줄로 안 쌓이고 같은 줄에서만 계속 텍스트가 바뀌는(사실상 안
+            // 보이는 것처럼 느껴지는) 증상으로 나타났다.
+            const isFinal = isAgent
+              ? msg.turn_status === 1 || msg.turn_status === 2
+              : msg.final === true || msg.is_final === true;
 
             this.handlers.onTranscriptChunk?.({
-              speaker: object.startsWith("assistant") ? "AI_AGENT" : "USER",
+              speaker: isAgent ? "AI_AGENT" : "USER",
               text,
-              isFinal: msg.final === true || msg.is_final === true,
+              isFinal,
             });
           } catch {
             // 파싱 실패는 조용히 무시 — 오디오 통화 자체엔 영향 없음
