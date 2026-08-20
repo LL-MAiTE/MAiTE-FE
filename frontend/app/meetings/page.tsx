@@ -30,7 +30,7 @@ const TABS: { key: MeetingStatus | "전체"; label: string }[] = [
 ];
 
 export default function AllMeetingsPage() {
-  const { meetings, projects } = useStore();
+  const { meetings, projects, deleteMeeting } = useStore();
   const [tab, setTab] = useState<MeetingStatus | "전체">("전체");
 
   const filtered = useMemo(
@@ -110,6 +110,20 @@ export default function AllMeetingsPage() {
                   {new Date(meeting.createdAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
                 </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                title="회의 삭제"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (window.confirm(`"${meeting.title}" 회의를 삭제할까요? 되돌릴 수 없습니다.`)) {
+                    deleteMeeting(meeting.id);
+                  }
+                }}
+              >
+                삭제
+              </button>
             </Link>
           );
         })

@@ -177,7 +177,7 @@ export default function HomeDashboardPage() {
         </div>
       </div>
 
-      <section className="section">
+      <section className="section" id="projects">
         <div className="section-header">
           <h2>프로젝트 ({projects.length}개)</h2>
           <button className="btn btn-sm btn-primary" onClick={() => setShowForm((v) => !v)}>

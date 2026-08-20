@@ -46,7 +46,7 @@ const NAV_ITEMS: {
     key: "projects",
     label: "프로젝트",
     icon: "/icons/nav-projects.svg",
-    href: "/",
+    href: "/#projects",
     activeMatch: (p) => p.startsWith("/projects"),
   },
   {
