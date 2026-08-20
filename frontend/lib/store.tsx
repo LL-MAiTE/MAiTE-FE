@@ -33,7 +33,15 @@ import { useAuth } from "./auth";
  * 참고). 컴포넌트 쪽 훅 사용법(useStore())은 마이그레이션 전후로 그대로 유지되도록 설계했다.
  */
 
-const STORAGE_KEY = "tkzr_store_v1";
+// 로그인 사용자별로 다른 localStorage 네임스페이스를 쓴다. 예전엔 키가 고정이라, 같은
+// 브라우저에서 계정을 바꿔 로그인해도 이전 계정의 회의/문서가 그대로 남아 보이는 문제가
+// 있었다(실사용 중 발견 — 프로젝트는 이제 백엔드가 원본이라 계정별로 걸러지지만, 회의는
+// 아직 이 localStorage가 원본이라 안 걸러지고 있었음). 계정 전환 시 이전 계정 데이터가
+// 지워지는 게 아니라 그 계정 고유의 키에 그대로 남아있고, 그 계정으로 다시 로그인하면
+// 돌아온다.
+function storageKeyFor(userId: string | null | undefined): string {
+  return userId ? `tkzr_store_v1:${userId}` : "tkzr_store_v1:anonymous";
+}
 
 interface StoreState {
   projects: Project[];
@@ -214,10 +222,12 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
   const { user } = useAuth();
 
-  // 최초 mount 시 localStorage에 저장된 상태가 있으면 그걸로 덮어쓴다 (없으면 seed 유지)
+  // 로그인 사용자가 정해지거나 바뀔 때마다 그 사람 전용 localStorage 키를 다시 읽는다
+  // (없으면 빈 상태로 시작 — 다른 계정 데이터가 섞여 보이면 안 되므로).
   useEffect(() => {
+    setHydrated(false);
     try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
+      const raw = window.localStorage.getItem(storageKeyFor(user?.id));
       if (raw) {
         const parsed = JSON.parse(raw) as StoreState;
         // 예전에 lib/mockSeed.ts가 브라우저에 심어둔 데모 프로젝트("project_dashboard",
@@ -227,17 +237,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         parsed.projects = parsed.projects.filter((p) => p.id !== "project_dashboard");
         parsed.meetings = parsed.meetings.filter((m) => m.projectId !== "project_dashboard");
         setState(parsed);
+      } else {
+        setState(seedState());
       }
     } catch {
       // 저장된 값이 깨졌으면 seed로 계속 진행
+      setState(seedState());
     }
     setHydrated(true);
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!hydrated) return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated]);
+    window.localStorage.setItem(storageKeyFor(user?.id), JSON.stringify(state));
+  }, [state, hydrated, user?.id]);
 
   // 로그인 사용자가 정해지면(또는 바뀌면) 그 사람의 실제 프로젝트 목록을 백엔드에서
   // 가져온다. documents/meetingIds는 아직 로컬(mock)이 원본이라, 같은 id로 이미 로컬에
